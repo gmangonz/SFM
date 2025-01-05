@@ -15,7 +15,7 @@ import torch
 __cwd__ = Path(os.path.dirname(__file__))
 
 
-from config import CONFIG, K, siftDetector
+from sfm.config import CONFIG, K, siftDetector
 
 formatter = logging.Formatter(fmt="[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%Y/%m/%d %H:%M:%S")
 handler = logging.StreamHandler()

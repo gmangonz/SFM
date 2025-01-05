@@ -5,8 +5,8 @@ import cv2
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
-from config import CONFIG
-from utils import ImageData
+from sfm.config import CONFIG
+from sfm.utils import ImageData
 
 
 @dataclass

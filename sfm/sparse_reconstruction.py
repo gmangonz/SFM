@@ -8,10 +8,10 @@ from gtsam.symbol_shorthand import C as Camera
 from gtsam.symbol_shorthand import L as Landmark
 from scipy.spatial.transform import Rotation as Rotation
 
-from config import K
-from covisibility import Track
-from utils import StereoCamera
-from visualization import visualize_graph
+from sfm.config import K
+from sfm.covisibility import Track
+from sfm.utils import StereoCamera
+from sfm.visualization import visualize_graph
 
 point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
 camera_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
@@ -24,6 +24,7 @@ def setup_graph(G_covisibility: nx.DiGraph, init_tracks: list[Track], valid_trac
     initial_estimate = gtsam.Values()
     k = gtsam.Cal3_S2(K[0, 0], K[1, 1], 0.0, K[0, 2], K[1, 2])
 
+    # TODO: Outlier points come from here!!
     # Add prior factors initial camera pair's tracks
     for track_obj in init_tracks:
         edges = track_obj.get_edges()
@@ -45,6 +46,7 @@ def setup_graph(G_covisibility: nx.DiGraph, init_tracks: list[Track], valid_trac
     camera_attrs = [(camera_0, camera_1, data) for camera_0, camera_1, data in G_covisibility.edges(data=True)]
     camera_attrs = natsort.natsorted(camera_attrs, key=lambda x: x[-1]["num_pts_3D"])
 
+    # TODO: Gauge how to deal with cameras from graph or from tracks
     for camera_0, camera_1, data in camera_attrs:
         if data["num_pts_3D"] > 0:
 
@@ -82,7 +84,14 @@ def setup_graph(G_covisibility: nx.DiGraph, init_tracks: list[Track], valid_trac
     visualize_graph(initial_estimate, defaultdict(lambda: [255, 255, 255]))
 
     params = gtsam.LevenbergMarquardtParams()
+    params.setVerbosityLM("SUMMARY")
+    params.setMaxIterations(10)
+    params.setRelativeErrorTol(1e-5)
+    params.setAbsoluteErrorTol(1e-5)
+
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimate, params)
     result = optimizer.optimize()
     marginals = gtsam.Marginals(graph, result)
-    return result, marginals
+
+    error = graph.error(result)
+    return result, marginals, error

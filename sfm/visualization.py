@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 
-from utils import ImageData, extract_camera_poses, to_cv2KeyPoint
+from sfm.utils import ImageData, extract_camera_poses, to_cv2KeyPoint
 
 __cwd__ = os.path.dirname(os.path.abspath(__file__))
 
@@ -142,21 +142,23 @@ def visualize_graph(
         marker=dict(size=pt_scale, color=pt_colors),
     )
 
-    camera_trans = np.asarray(camera_trans)
-    camera_scatter = go.Scatter3d(
-        x=camera_trans[:, 0],
-        y=camera_trans[:, 1],
-        z=camera_trans[:, 2],
-        mode="markers",
-        name="Cameras",
-        marker=dict(size=5, color="blue"),
-    )
-
     i = [0, 0, 0, 0]
     j = [1, 2, 3, 4]
     k = [2, 3, 4, 1]
 
-    for name, vertices in zip(camera_names, frustums):
+    for name, vertices, t in zip(camera_names, frustums, camera_trans):
+        camera_scatter = go.Scatter3d(
+            x=[t[0]],
+            y=[t[1]],
+            z=[t[2]],
+            mode="markers",
+            name=name,
+            legendgroup="Cameras",
+            showlegend=False,
+            marker=dict(size=3, color="blue"),
+        )
+        fig.add_trace(camera_scatter)
+
         x, y, z = vertices.T
         pyramid = go.Mesh3d(
             x=x,
@@ -182,11 +184,11 @@ def visualize_graph(
             z=z,
             mode="lines",
             legendgroup="Frustums",
-            name="Frustum",
-            line=dict(color="rgba(255,0,0,0.5)", width=1),
+            name=f"Frustum_{name}",
             showlegend=False,
+            line=dict(color="rgba(255,0,0,0.5)", width=1),
         )
         fig.add_trace(pyramid)
 
-    fig.add_traces(data=[landmark_scatter, camera_scatter])
+    fig.add_traces(data=[landmark_scatter])
     fig.show()

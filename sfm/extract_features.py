@@ -5,8 +5,8 @@ import natsort
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
-from config import CONFIG
-from utils import SIFT, KeyPoint
+from sfm.config import CONFIG
+from sfm.utils import SIFT, KeyPoint
 
 
 class ImageDataset(Dataset):

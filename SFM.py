@@ -1,11 +1,15 @@
 import argparse
-import time
+import os
+import sys
+from pathlib import Path
 
 import networkx as nx
 import numpy as np
 import tqdm
 
-from covisibility import (
+sys.path.insert(0, str(Path(__file__).parent))
+
+from sfm.covisibility import (
     add_to_covisibility_graph,
     add_to_tracks_graph,
     get_common_track_IDs,
@@ -14,10 +18,10 @@ from covisibility import (
     get_query_and_train,
     obtrain_tracks,
 )
-from extract_features import get_image_loader
-from image_matching import get_image_matcher_loader
-from sparse_reconstruction import setup_graph
-from utils import (
+from sfm.extract_features import get_image_loader
+from sfm.image_matching import get_image_matcher_loader
+from sfm.sparse_reconstruction import setup_graph
+from sfm.utils import (
     ImageData,
     StereoCamera,
     filter_inliers,
@@ -27,9 +31,9 @@ from utils import (
     get_src_dst_pts,
     logger,
 )
-from visualization import plot_matches
+from sfm.visualization import plot_matches
 
-IMG_DIR = "/home/aiuser/gonzag124/projects/SFM/buddha_images"
+IMG_DIR = Path(__file__).parent / "images"
 
 
 def preprocess() -> tuple[nx.DiGraph, nx.DiGraph, list[ImageData]]:
@@ -59,7 +63,7 @@ if __name__ == "__main__":
     tracks, camera2trackIDs, node2trackID = obtrain_tracks(G_tracks)
 
     # Get initial edge
-    init_edge = (7, 8)  # get_edge_with_largest_weight(G_covisibility)
+    init_edge = (0, 1)  # get_edge_with_largest_weight(G_covisibility)
     queryIdx_init, trainIdx_init, _, _, track_objs = get_query_and_train(init_edge, tracks, camera2trackIDs)
 
     # Get corresponding source and destination points
@@ -70,6 +74,7 @@ if __name__ == "__main__":
     stereo_camera = StereoCamera(R_1=R_out, t_1=t_out)
     pts_3D_out = stereo_camera.triangulate(src_pts, dst_pts)
     inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
+    inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
 
     G_covisibility.add_edges_from([init_edge], num_pts_3D=sum(inliers), stereo_camera=stereo_camera, processed=True)
     assert len(pts_3D_out) == len(track_objs) == len(inliers)
