@@ -1,6 +1,6 @@
 import heapq
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 
 import natsort
@@ -15,7 +15,7 @@ from utils import ImageData, logger
 class Track:
     """In theory, represents a single (3D) point that propagates from an initial image to subsequent images."""
 
-    base_camera_id: int
+    track_id: int
     track: list[tuple[int, int]] | np.ndarray
     valid_pts: int = 0
 
@@ -25,35 +25,42 @@ class Track:
         self.cam2featureIdx = dict(self.track)
         # Get the cameras in order seen in the track
         self.cameras = np.asarray(self.track)[:, 0]
-        # Initialize mapping from edge to triangulated boolean, 3D point, and inlier status
-        self._edge2triangulated = defaultdict(lambda: False)
+        # Initialize mapping from edge to triangulated boolean, 3D point, inlier status, and respective 2D points
         self._edge2pt = defaultdict(lambda: np.array([-1.0, -1.0, -1.0]))
         self._edge2inlier = defaultdict(lambda: False)
+        self._edge2src = defaultdict(lambda: np.array([-1.0, -1.0]))
+        self._edge2dst = defaultdict(lambda: np.array([-1.0, -1.0]))
 
-    def update_triangulated(self, camera_0: int, camera_1: int, pt_3D: np.ndarray, is_inlier: bool):
-        assert self.cam2featureIdx.get(camera_0, None) is not None, "Camera 0 is not a valid camera in the track."
-        assert self.cam2featureIdx.get(camera_1, None) is not None, "Camera 1 is not a valid camera in the track."
-
-        self._edge2triangulated[(camera_0, camera_1)] = True
-        self._edge2pt[(camera_0, camera_1)] = pt_3D
-        self._edge2inlier[(camera_0, camera_1)] = is_inlier
-
-        if is_inlier:
+    def update_triangulated(
+        self, camera_0: int, camera_1: int, pt_3D: np.ndarray, is_inlier: bool, src: np.ndarray, dst: np.ndarray
+    ):
+        _edge = (camera_0, camera_1)
+        assert self.cam2featureIdx.get(camera_0, None) is not None, f"{camera_0} is not a valid camera in {self.track}."
+        assert self.cam2featureIdx.get(camera_1, None) is not None, f"{camera_1} is not a valid camera in {self.track}."
+        if is_inlier and not _edge in self._edge2pt:
             self.valid_pts += 1
 
-    def is_triangulated(self, edge: tuple[int, int] = None) -> bool:
-        return False if edge is None else self._edge2triangulated[edge]
+        self._edge2inlier[_edge] = is_inlier
+        self._edge2pt[_edge] = pt_3D
+        self._edge2src[_edge] = src
+        self._edge2dst[_edge] = dst
 
     def get_pt_3D(self, edge: tuple[int, int] = None) -> np.ndarray:
         return np.array([-1.0, -1.0, -1.0]) if edge is None else self._edge2pt[edge]
 
     def is_inlier(self, edge: tuple[int, int] = None) -> bool:
-        return (False if edge is None else self._edge2inlier[edge]) and self.is_triangulated(edge)
+        return False if edge is None else self._edge2inlier[edge]
 
-    def is_valid_track(self):
-        return self.valid_pts >= 3
+    def is_valid_track(self, n: int = 3) -> bool:
+        return self.valid_pts >= n
 
-    def __len__(self):
+    def get_edges(self) -> list[tuple[int, int]]:
+        return list(self._edge2pt.keys())
+
+    def get_edge(self, edge) -> tuple[tuple[np.ndarray, np.ndarray], np.ndarray, bool]:
+        return (self._edge2src[edge], self._edge2dst[edge]), self._edge2pt[edge], self._edge2inlier[edge]
+
+    def __len__(self) -> int:
         return len(self.track)
 
 
@@ -243,37 +250,24 @@ def add_to_tracks_graph(G: nx.DiGraph, camera_0: int, camera_1: int, matches: li
     return G
 
 
-def _get_component(G: nx.DiGraph, base_node: tuple[int, int], dijkstra: bool = False) -> list[list[tuple[int, int]]]:
+def unique_dfs(graph: nx.DiGraph, base_node: tuple[int, int], *args) -> list[list[tuple[int, int]]]:
     """
-    Retrieves the connected component(s) of a graph starting from a base node.
+    Retrieves the unique connected component(s) of a graph starting from a base node.
+    When forks are detected, will split and copy the component for the new path(s).
 
     Parameters
     ----------
-    G : nx.DiGraph
+    graph : nx.DiGraph
         Graph.
     base_node : tuple[int, int]
         Base not to start from.
-    dijkstra : bool, optional
-        Whether to use dijkstra algorithm, by default False.
 
     Returns
     -------
     list[list[tuple[int, int]]]
         List of tracks.
     """
-    if dijkstra:
-        count, path = nx.single_source_dijkstra(G, source=base_node)
 
-        max_value = max(count.values())
-        last_node = [key for key, value in count.items() if value == max_value]
-        component = [path[key] for key in last_node]
-    else:
-        component = nx.kosaraju_strongly_connected_components(G, base_node)
-        # NOTE: Edges that join to a node work fine, but edges that fork from a node are a little tricky.
-    return component
-
-
-def _get_component(graph: nx.DiGraph, base_node: tuple[int, int], *args) -> list[list[tuple[int, int]]]:
     def dfs(node, current_path: list, all_paths: list):
         current_path.append(node)
         successors = list(graph.successors(node))
@@ -295,7 +289,39 @@ def _get_component(graph: nx.DiGraph, base_node: tuple[int, int], *args) -> list
     return all_paths
 
 
-def obtrain_tracks(G: nx.DiGraph):
+def _get_component(G: nx.DiGraph, base_node: tuple[int, int], method: str = "dfs") -> list[list[tuple[int, int]]]:
+    """
+    Retrieves the connected component(s) of a graph starting from a base node.
+
+    Parameters
+    ----------
+    G : nx.DiGraph
+        Graph.
+    base_node : tuple[int, int]
+        Base not to start from.
+    method : bool, optional
+        Method to use for track extraction, by default False.
+
+    Returns
+    -------
+    list[list[tuple[int, int]]]
+        List of tracks.
+    """
+    if method == "dijkstra":
+        count, path = nx.single_source_dijkstra(G, source=base_node)
+
+        max_value = max(count.values())
+        last_node = [key for key, value in count.items() if value == max_value]
+        component = [path[key] for key in last_node]
+    elif method == "dfs":
+        # NOTE: Edges that join to a node work fine, but edges that fork from a node are a little tricky.
+        component = nx.kosaraju_strongly_connected_components(G, base_node)
+    else:
+        component = unique_dfs(G, base_node)
+    return component
+
+
+def obtrain_tracks(G: nx.DiGraph) -> tuple[list[Track], dict[int, list[int]], dict[tuple[int, int], list[int]]]:
     """
     Obtain the corresponding tracks of feature points. Results are similar
     to those of: https://imagine.enpc.fr/~moulonp/publis/poster_CVMP12.pdf.
@@ -308,47 +334,57 @@ def obtrain_tracks(G: nx.DiGraph):
     Returns
     -------
     tuple[list[Track], dict]
-        List of tracks, where each track is a sorted list of
+        List of track objects, where each track object contains a sorted list of
         tuples (camera_id, feature_id) by camera_id.
-        Mapping from camera_id to all tracks (via indices) that contain camera_id.
+        Mapping from camera_id to all track IDs (via indices) that contain camera_id.
+        Mapping of (camera_id, feature_id) to the track ID.
     """
     start = time.time()
     camera2trackID: dict[int, list[int]] = defaultdict(list)
     tracks: list[Track] = []
+    node2trackID: dict[tuple[int, int], list[int]] = defaultdict(list)
 
     base_nodes = [node for node in G.nodes if G.in_degree(node) == 0]
 
     for base_node in base_nodes:
         # Get connected components starting from a base node
-        component = _get_component(G, base_node, True)
+        component = _get_component(G, base_node, method="dfs")
         camera_id, _ = base_node
 
         for track in component:
             if len(track) < 3:
                 continue
+            # Sort the track by camera_id if not already sorted and a set
+            if isinstance(track, set):
+                track = natsort.natsorted(list(track), key=lambda x: x[0])
             assert base_node == track[0], "First node should be the base node."
             # Convert to Track object
-            track_obj = Track(camera_id, track)
+            track_ID = len(tracks)
+            track_obj = Track(track_id=track_ID, track=track)
             tracks.append(track_obj)
             # Get the order of cameras in the track
             cameras_in_track = track_obj.cameras
             assert cameras_in_track[0] == camera_id, "First camera_id should be the base node's camera_id."
             # Add to camera2trackID
             for cam in cameras_in_track:
-                camera2trackID[cam].append(len(tracks) - 1)
+                camera2trackID[cam].append(track_ID)
+            # Add to node2trackID
+            for cam_featureIdx in track:
+                node2trackID[cam_featureIdx].append(track_ID)
 
     end = time.time()
     logger.info(f"Number of base nodes: {len(base_nodes)}.")
     logger.info(f"Number of tracks obtained: {len(tracks)}.")
     logger.info(f"Track extraction time taken: {end - start} seconds.")
-    return tracks, camera2trackID
+    return tracks, camera2trackID, node2trackID
 
 
 def get_common_track_IDs(
     new_edge: tuple[int, int], camera2trackIDs: dict[int, list[int]], reference_edge: tuple[int, int] = None
 ) -> set[int]:
     """
-    _summary_
+    Retrieves the common track IDs that are seen by the new edge and,
+    if passed, the reference edge.
 
     Parameters
     ----------
@@ -374,14 +410,18 @@ def get_common_track_IDs(
 
 
 def get_query_and_train(
-    new_edge: tuple[int],
+    new_edge: tuple[int, int],
     tracks: list[Track],
     camera2trackIDs: dict[int, list[int]],
     is_initial_edge: bool = True,
     reference_edge: tuple[int, int] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[Track]]:
     """
-    _summary_
+    Given the input edges, where an edge represents 2 cameras, will retrieve
+    the track IDs that pass through, i.e, tracks that contain the cameras desired.
+
+    For these tracks, will retrieve the queryIdx, trainIdx, the 3D reference point
+    and the reference inlier boolean.
 
     Parameters
     ----------
@@ -400,8 +440,8 @@ def get_query_and_train(
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[Track]]
-        Query indices, train indices, 3D points, valid 3D points, track objects.
-        If is_initial_edge is False, then queryIdx and trainIdx will span the edges passed.
+        Query indices, train indices, 3D points, valid 3D points, and track objects.
+        If is_initial_edge is False, then queryIdx and trainIdx will span all the edges passed.
     """
     if not is_initial_edge and not reference_edge:
         raise ValueError("reference_edge must be passed if is_initial_edge is False.")

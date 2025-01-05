@@ -1,18 +1,22 @@
 import os
 
 import cv2
+import gtsam
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
 
-from utils import ImageData, to_cv2KeyPoint
+from utils import ImageData, extract_camera_poses, to_cv2KeyPoint
 
 __cwd__ = os.path.dirname(os.path.abspath(__file__))
 
 
 def plot_matches(
-    image_i: ImageData, image_j: ImageData, queryIdx: np.ndarray, trainIdx: np.ndarray, inliers: np.ndarray, edge: str
+    image_i: ImageData, image_j: ImageData, queryIdx: np.ndarray, trainIdx: np.ndarray, inliers: np.ndarray
 ) -> None:
+
+    edge = "-".join([image_i.filename, image_j.filename])
 
     print(f"Plotting matches for {image_i.filename} and {image_j.filename}")
     image_1, clahe_img_1, kpts_1, _ = image_i.image, image_i.clahe_img, image_i.keypoints, image_i.features
@@ -81,11 +85,11 @@ def plot_matches(
 
     ax = fig.add_subplot(gs[3, :])
     ax.imshow(np.array(match_img).astype(np.uint8), aspect=ASPECT)  # RGB is integer type
-    ax.plot(src_pts.squeeze()[:, 0], src_pts.squeeze()[:, 1], "xr")
-    ax.plot(dst_pts.squeeze()[:, 0] + offset, dst_pts.squeeze()[:, 1], "xr")
+    ax.plot(src_pts[:, 0], src_pts[:, 1], "xr")
+    ax.plot(dst_pts[:, 0] + offset, dst_pts[:, 1], "xr")
     ax.plot(
-        [src_pts.squeeze()[:, 0], dst_pts.squeeze()[:, 0] + offset],
-        [src_pts.squeeze()[:, 1], dst_pts.squeeze()[:, 1]],
+        [src_pts[:, 0], dst_pts[:, 0] + offset],
+        [src_pts[:, 1], dst_pts[:, 1]],
         "r",
         linewidth=0.5,
     )
@@ -95,3 +99,94 @@ def plot_matches(
     plt.tight_layout()
     plt.savefig(os.path.join(__cwd__, "debug", f"matches_{edge}.png"))
     plt.close()
+
+
+def visualize_graph(
+    estimates,
+    colors: dict[gtsam.Symbol, np.ndarray],
+    pt_scale: int = 1,
+    title: str = "Structure from Motion",
+):
+
+    fig = go.Figure()
+    axes = dict(
+        visible=False,
+        showbackground=False,
+        showgrid=False,
+        showline=False,
+        showticklabels=True,
+        autorange=True,
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        scene=dict(
+            xaxis=axes,
+            yaxis=axes,
+            zaxis=axes,
+            aspectmode="data",
+        ),
+        title=title,
+    )
+
+    landmarks, pt_colors, camera_trans, camera_names, frustums = extract_camera_poses(estimates, colors)
+    landmarks = np.asarray(landmarks)
+    pt_colors = np.asarray(pt_colors) / 255.0
+
+    landmark_scatter = go.Scatter3d(
+        x=landmarks[:, 0],
+        y=landmarks[:, 1],
+        z=landmarks[:, 2],
+        mode="markers",
+        name="Landmarks",
+        marker=dict(size=pt_scale, color=pt_colors),
+    )
+
+    camera_trans = np.asarray(camera_trans)
+    camera_scatter = go.Scatter3d(
+        x=camera_trans[:, 0],
+        y=camera_trans[:, 1],
+        z=camera_trans[:, 2],
+        mode="markers",
+        name="Cameras",
+        marker=dict(size=5, color="blue"),
+    )
+
+    i = [0, 0, 0, 0]
+    j = [1, 2, 3, 4]
+    k = [2, 3, 4, 1]
+
+    for name, vertices in zip(camera_names, frustums):
+        x, y, z = vertices.T
+        pyramid = go.Mesh3d(
+            x=x,
+            y=y,
+            z=z,
+            color="rgba(255,0,0,0.5)",
+            i=i,
+            j=j,
+            k=k,
+            legendgroup="Cameras",
+            name=name,
+            showlegend=False,
+        )
+        fig.add_trace(pyramid)
+
+        triangles = np.vstack((i, j, k)).T
+        triangles = np.array([vertices[i] for i in triangles.reshape(-1)])
+        x, y, z = triangles.T
+
+        pyramid = go.Scatter3d(
+            x=x,
+            y=y,
+            z=z,
+            mode="lines",
+            legendgroup="Frustums",
+            name="Frustum",
+            line=dict(color="rgba(255,0,0,0.5)", width=1),
+            showlegend=False,
+        )
+        fig.add_trace(pyramid)
+
+    fig.add_traces(data=[landmark_scatter, camera_scatter])
+    fig.show()

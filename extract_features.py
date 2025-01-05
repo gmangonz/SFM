@@ -1,4 +1,3 @@
-from itertools import combinations
 from pathlib import Path
 
 import cv2
@@ -7,8 +6,7 @@ import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
 from config import CONFIG
-from image_matching import MatchingDataset
-from utils import SIFT, ImageData, KeyPoint
+from utils import SIFT, KeyPoint
 
 
 class ImageDataset(Dataset):
@@ -64,18 +62,3 @@ def get_image_loader(image_dir: str):
         collate_fn=collate_fn,
     )
     return loader
-
-
-def get_image_matcher_loader(image_data: list[ImageData]):
-
-    pairs = list(combinations(range(len(image_data)), 2))
-    dataset = MatchingDataset(possible_pairs=pairs, image_data=image_data, threshold=CONFIG.threshold)
-    pair_loader = DataLoader(
-        dataset,
-        num_workers=10,
-        shuffle=False,
-        pin_memory=False,
-        collate_fn=lambda x: x,
-        prefetch_factor=2,
-    )
-    return pair_loader

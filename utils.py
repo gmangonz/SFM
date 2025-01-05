@@ -51,7 +51,7 @@ class SingleCamera:
         )
         return np.reshape(uv_undistort, uv.shape)
 
-    def get_gtsam_pose(self):
+    def get_gtsam_pose(self) -> gtsam.Pose3:
         return gtsam.Pose3(gtsam.Rot3(self.R), np.reshape(self.t, (3, 1)))
 
 
@@ -99,7 +99,7 @@ class StereoCamera:
         self.pts_3D = np.reshape(xyz, old_shape)
         return self.pts_3D
 
-    def get_gtsam_poses(self):
+    def get_gtsam_poses(self) -> tuple[gtsam.Pose3, gtsam.Pose3]:
         return self.cam_0.get_gtsam_pose(), self.cam_1.get_gtsam_pose()
 
     def __getitem__(self, key) -> SingleCamera:
@@ -189,7 +189,7 @@ def get_src_dst_pts(
     return src_pts, dst_pts
 
 
-def to_cv2KeyPoint(data: KeyPoint):
+def to_cv2KeyPoint(data: KeyPoint) -> cv2.KeyPoint:
     return cv2.KeyPoint(data.pt[0], data.pt[1], data.size, data.angle, data.response, data.octave, data.class_id)
 
 
@@ -287,7 +287,8 @@ def find_optimal_E(
     return R_out, t_out, mask_out
 
 
-def compute_essential_matrix(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def compute_essential_matrix(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
     E, mask_out = cv2.findEssentialMat(
         src_pts,
         dst_pts,
@@ -300,7 +301,9 @@ def compute_essential_matrix(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[
     return E, mask_out, inliers
 
 
-def get_pose(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def get_pose(
+    src_pts: np.ndarray, dst_pts: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Computes the relative pose between 2 cameras given the source and
     destination points in the respective image planes.
@@ -331,7 +334,7 @@ def get_pose(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[np.ndarray, np.n
 
 def get_pnp_pose(
     pts_3D: np.ndarray, pts_2D: np.ndarray, dist_coeffs: np.ndarray, mask: np.ndarray = None
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
 
     if mask is None:
         mask = np.ones(len(pts_3D), dtype=bool)
@@ -345,7 +348,7 @@ def get_pnp_pose(
         pts_2D[mask],
         K.astype(np.float32),
         dist_coeffs,
-        reprojectionError=1.0,
+        reprojectionError=3.0,
         confidence=0.99,
         flags=cv2.SOLVEPNP_ITERATIVE,
     )
@@ -354,10 +357,36 @@ def get_pnp_pose(
     result_indices = masked_indices[inliers_indices]
 
     if success:
+        R, t = cv2.solvePnPRefineLM(
+            objectPoints=pts_3D[mask],
+            imagePoints=pts_2D[mask],
+            cameraMatrix=K.astype(np.float32),
+            distCoeffs=dist_coeffs,
+            rvec=R,
+            tvec=t,
+        )
         R, _ = cv2.Rodrigues(R)
         return R, t, np.isin(initial_indices, result_indices, assume_unique=True)
 
     return None, None, None
+
+
+def filter_inliers(
+    pts_3D: np.ndarray, pt_2d: np.ndarray, R: np.ndarray, t: np.ndarray, inliers: np.ndarray = None
+) -> np.ndarray:
+
+    N = pts_3D.shape[0]
+    inliers = np.ones(N, dtype=bool) if inliers is None else inliers
+    pt_3d_H = np.hstack((pts_3D, np.ones((N, 1))))  # [N, 4]
+    R_t_cam = np.hstack((R, t.reshape(3, 1)))  # [3, 4]
+
+    X_cam = pt_3d_H @ R_t_cam.T
+    pt_2D = X_cam @ K.T
+    projected_2d = pt_2D[:, :2] / pt_2D[:, 2, None]  # [N, 2]
+
+    projection_inliers = np.linalg.norm(pt_2d - projected_2d, axis=1) < 2.5
+    positive_z_inliers = pts_3D[:, -1] > 0
+    return projection_inliers & positive_z_inliers & inliers
 
 
 def get_edge_relation(reference_edge: tuple[int, int], new_edge: tuple[int, int]) -> tuple[str, int]:
@@ -380,60 +409,7 @@ def pose_to_matrix(pose):
     return np.asanyarray(pose.matrix())
 
 
-def visualize_graph(
-    estimates,
-    colors: dict[gtsam.Symbol, np.ndarray],
-    pt_scale: int = 3,
-    title: str = "SFM + Trajectory",
-    debug_key: str = "",
-):
-
-    fig = plt.figure(1, figsize=(12, 12))
-    ax = fig.add_subplot(111, projection="3d")
-
-    landmarks = []
-    display_colors = []
-    camera_frames = []
-
-    for key in estimates.keys():
-        symbol = gtsam.Symbol(key)
-
-        if symbol.string()[0] == "l":  # Landmark
-            landmark_pos = estimates.atPoint3(key)
-            landmarks.append([*landmark_pos])
-            if symbol.string() == debug_key:
-                display_colors.append([255, 0, 0])
-            else:
-                display_colors.append(colors[key])
-
-        elif symbol.string()[0] == "c":  # Camera
-            pose = estimates.atPose3(key)
-            camera_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-            camera_frame.transform(pose_to_matrix(pose))
-            camera_frames.append(camera_frame)
-
-    landmarks = np.array(landmarks)
-    display_colors = np.array(display_colors) / 255.0
-
-    ax.scatter(
-        landmarks[:, 0],
-        landmarks[:, 1],
-        landmarks[:, 2],
-        c=display_colors,
-        s=pt_scale,
-    )
-
-    gtsam.utils.plot.plot_trajectory(1, estimates, scale=3, title=title)
-    gtsam.utils.plot.set_axes_equal(1)
-
-    ax = plt.gca()
-    ax.view_init(elev=-75, azim=-90)
-
-    save_pcd(landmarks, display_colors, camera_frames, title=title)
-    plt.show()
-
-
-def save_pcd(landmarks: np.ndarray, display_colors: np.ndarray, camera_frames: list[np.ndarray], title: str = "pcd"):
+def save_pcd(landmarks: np.ndarray, display_colors: np.ndarray, title: str = "pcd"):
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(landmarks)
     point_cloud.colors = o3d.utility.Vector3dVector(display_colors)
@@ -441,3 +417,46 @@ def save_pcd(landmarks: np.ndarray, display_colors: np.ndarray, camera_frames: l
     output_filename = "_".join(title.split())
     output_filename = f"{output_filename}.ply"
     o3d.io.write_point_cloud(os.path.join(__cwd__, output_filename), point_cloud)
+
+
+def extract_camera_poses(
+    estimates, colors: dict[gtsam.Symbol, np.ndarray], scale: int = 1.0
+) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]], list[np.ndarray], list[str], list[np.ndarray]]:
+
+    landmarks = []
+    display_colors = []
+    camera_trans = []
+    camera_names = []
+    frustums = []
+
+    W, H = K[0, 2] * 2, K[1, 2] * 2
+    corners = np.array([[0, 0], [W, 0], [W, H], [0, H], [0, 0]])
+    ones = np.ones((corners.shape[:-1] + (1,)), dtype=corners.dtype)
+
+    corners = np.concatenate([corners, ones], axis=-1)
+    corners = corners @ np.linalg.inv(K).T
+
+    for key in estimates.keys():
+        symbol = gtsam.Symbol(key)
+
+        if symbol.string()[0] == "l":  # Landmark
+            landmark_pos = estimates.atPoint3(key)
+            landmarks.append([*landmark_pos])
+            if symbol.string() == "":
+                display_colors.append([255, 0, 0])
+            else:
+                display_colors.append(colors[key])
+
+        elif symbol.string()[0] == "c":  # Camera
+            pose = estimates.atPose3(key)
+
+            R: np.ndarray = pose.rotation().matrix()
+            t: np.ndarray = pose.translation()
+
+            cam_plane = (corners / 2 * scale) @ R.T + t
+            vertices = np.concatenate(([t], cam_plane))  # [6, 3]
+            camera_trans.append(t)
+            camera_names.append(f"Camera_{symbol.index()}")
+            frustums.append(vertices)
+
+    return landmarks, display_colors, camera_trans, camera_names, frustums

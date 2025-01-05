@@ -15,12 +15,12 @@ class CONFIG(DotDict):
     contrastThreshold = 0.04  # 0.04
     edgeThreshold = 40  # 40, 5
     sigma = 0.5  # 0.5, 1.6
-    threshold = 0.8
+    threshold = 0.75
     ransacReprojThreshold = 1.0
     confidence = 0.999
     RGB = True
     clahe = True
-    NMS = True
+    NMS = False
     NMS_dist = 5  # 5, 3
     clipLimit = 10.0  # 40
     tileGridSize = (8, 8)
