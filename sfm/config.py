@@ -9,7 +9,6 @@ class DotDict(dict):
 
 
 class CONFIG(DotDict):
-
     nfeatures = 0
     nlayers = 6  # 6, 3
     contrastThreshold = 0.04  # 0.04
@@ -24,9 +23,7 @@ class CONFIG(DotDict):
     NMS_dist = 5  # 5, 3
     clipLimit = 10.0  # 40
     tileGridSize = (8, 8)
-
-    def __init__(self, **kwargs):
-        super(CONFIG, self).__init__(**kwargs)
+    method = "dijkstra"
 
 
 siftDetector = cv2.SIFT.create(
@@ -37,15 +34,5 @@ siftDetector = cv2.SIFT.create(
     sigma=CONFIG.sigma,
 )
 
-
-K = np.array([[3053, 0, 2016], [0, 3053, 1512], [0, 0, 1]])
-
-W_ratio = 1080 / 4032
-K[0, 0] = K[0, 0] * W_ratio
-K[1, 1] = K[1, 1] * W_ratio
-K[0, 2] = K[0, 2] * W_ratio
-
-H_ratio = 1920 / 3024
-K[1, 2] = K[1, 2] * H_ratio
 
 K = np.array([[1080, 0, 540], [0, 1080, 960], [0, 0, 1]])

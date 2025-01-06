@@ -119,10 +119,10 @@ def get_next_edge(G: nx.DiGraph, init_edge: tuple[int, int]):
 
     while heap:
         # Get the edge with the highest weight and num_pts
-        _, _, reference_edge, new_edge = heapq.heappop(heap)
+        ref_num_pts, ref_weight, reference_edge, new_edge = heapq.heappop(heap)
         if not G.edges[new_edge]["processed"]:
             G.edges[new_edge]["processed"] = True
-            yield reference_edge, new_edge
+            yield ref_num_pts, ref_weight, reference_edge, new_edge
 
             # Add adjacent edges to the heap
             for adjacent_edge in get_adjacent_edges(G, new_edge):
@@ -321,7 +321,9 @@ def _get_component(G: nx.DiGraph, base_node: tuple[int, int], method: str = "dfs
     return component
 
 
-def obtrain_tracks(G: nx.DiGraph) -> tuple[list[Track], dict[int, list[int]], dict[tuple[int, int], list[int]]]:
+def obtrain_tracks(
+    G: nx.DiGraph, method: str = "dijkstra"
+) -> tuple[list[Track], dict[int, list[int]], dict[tuple[int, int], list[int]]]:
     """
     Obtain the corresponding tracks of feature points. Results are similar
     to those of: https://imagine.enpc.fr/~moulonp/publis/poster_CVMP12.pdf.
@@ -348,7 +350,7 @@ def obtrain_tracks(G: nx.DiGraph) -> tuple[list[Track], dict[int, list[int]], di
 
     for base_node in base_nodes:
         # Get connected components starting from a base node
-        component = _get_component(G, base_node, method="dfs")
+        component = _get_component(G, base_node, method=method)
         camera_id, _ = base_node
 
         for track in component:
@@ -417,8 +419,8 @@ def get_query_and_train(
     reference_edge: tuple[int, int] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[Track]]:
     """
-    Given the input edges, where an edge represents 2 cameras, will retrieve
-    the track IDs that pass through, i.e, tracks that contain the cameras desired.
+    Given the input edges, where an edge represents 2 cameras, will retrieve the
+    track IDs that pass through, i.e, tracks that contain all the cameras desired.
 
     For these tracks, will retrieve the queryIdx, trainIdx, the 3D reference point
     and the reference inlier boolean.
@@ -426,7 +428,7 @@ def get_query_and_train(
     Parameters
     ----------
     new_edge : tuple[int, int]
-        New edge to process.
+        New edge to process, represents of a tuple of 2 cameras.
     tracks : list[Track]
         List of tracks, where each track is a sorted list of tuples
         (camera_id, feature_id) by camera_id.
@@ -435,7 +437,7 @@ def get_query_and_train(
     is_initial_edge : bool, optional
         Whether the edge is the initial edge, by default True.
     reference_edge : tuple[int, int], optional
-        Reference edge to use, by default None.
+        Reference edge to use, represents of a tuple of 2 cameras, by default None.
 
     Returns
     -------
