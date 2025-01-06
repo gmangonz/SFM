@@ -29,14 +29,6 @@ class ImageDataset(Dataset):
         image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
         return image
 
-        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE if self.grayscale else cv2.IMREAD_COLOR)
-        if image is None:
-            raise ValueError(f"Cannot read image {path}.")
-        if not self.grayscale:
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
-        return image
-
     def __len__(self):
         return len(self.image_paths)
 

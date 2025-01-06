@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+import natsort
 import networkx as nx
 import numpy as np
 import tqdm
@@ -20,7 +21,7 @@ from sfm.covisibility import (
 )
 from sfm.extract_features import get_image_loader
 from sfm.image_matching import get_image_matcher_loader
-from sfm.sparse_reconstruction import setup_graph
+from sfm.sparse_reconstruction import optimize
 from sfm.utils import (
     ImageData,
     StereoCamera,
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     tracks, camera2trackIDs, node2trackID = obtrain_tracks(G_tracks)
 
     # Get initial edge
-    init_edge = (0, 1)  # get_edge_with_largest_weight(G_covisibility)
+    init_edge = (7, 8)  # get_edge_with_largest_weight(G_covisibility)
     queryIdx_init, trainIdx_init, _, _, track_objs = get_query_and_train(init_edge, tracks, camera2trackIDs)
 
     # Get corresponding source and destination points
@@ -84,7 +85,6 @@ if __name__ == "__main__":
     logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
     # plot_matches(image_data[init_edge[0]], image_data[init_edge[1]], queryIdx_init, trainIdx_init, inliers)
 
-    init_tracks = [track_obj for track_obj in tracks if track_obj.is_valid_track(n=1)]
     for edges in get_next_edge(G_covisibility, init_edge=init_edge):
         reference_edge, new_edge = edges
         edge_loc, index = get_edge_relation(reference_edge, new_edge)
@@ -156,9 +156,9 @@ if __name__ == "__main__":
         # plot_matches(image_data[new_edge[0]], image_data[new_edge[1]], queryIdx_full, trainIdx_full, inliers)
 
     valid_tracks = [track_obj for track_obj in tracks if track_obj.is_valid_track(n=2)]
+    valid_tracks = natsort.natsorted(valid_tracks, key=lambda x: x.valid_pts)
     print("NUMBER OF VALID TRACKS:", len(valid_tracks))
-    setup_graph(
+    optimize(
         G_covisibility,
-        init_tracks,
         valid_tracks=valid_tracks,
     )

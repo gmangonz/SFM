@@ -184,7 +184,7 @@ def visualize_graph(
             z=z,
             mode="lines",
             legendgroup="Frustums",
-            name=f"Frustum_{name}",
+            name=name,
             showlegend=False,
             line=dict(color="rgba(255,0,0,0.5)", width=1),
         )
