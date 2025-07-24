@@ -13,14 +13,28 @@ __cwd__ = os.path.dirname(os.path.abspath(__file__))
 
 
 def plot_matches(
-    image_i: ImageData, image_j: ImageData, queryIdx: np.ndarray, trainIdx: np.ndarray, inliers: np.ndarray
+    image_i: ImageData,
+    image_j: ImageData,
+    queryIdx: np.ndarray,
+    trainIdx: np.ndarray,
+    inliers: np.ndarray,
 ) -> None:
 
     edge = "-".join([image_i.filename, image_j.filename])
 
     print(f"Plotting matches for {image_i.filename} and {image_j.filename}")
-    image_1, clahe_img_1, kpts_1, _ = image_i.image, image_i.clahe_img, image_i.keypoints, image_i.features
-    image_2, clahe_img_2, kpts_2, _ = image_j.image, image_j.clahe_img, image_j.keypoints, image_j.features
+    image_1, clahe_img_1, kpts_1, _ = (
+        image_i.image,
+        image_i.clahe_img,
+        image_i.keypoints,
+        image_i.features,
+    )
+    image_2, clahe_img_2, kpts_2, _ = (
+        image_j.image,
+        image_j.clahe_img,
+        image_j.keypoints,
+        image_j.features,
+    )
 
     kpts_1 = [to_cv2KeyPoint(kpt) for kpt in kpts_1]
     kpts_2 = [to_cv2KeyPoint(kpt) for kpt in kpts_2]
@@ -28,8 +42,18 @@ def plot_matches(
     image_1 = (image_1 * 255).astype(np.uint8)
     image_2 = (image_2 * 255).astype(np.uint8)
 
-    out_1 = cv2.drawKeypoints(image_1.copy(), kpts_1, image_1.copy(), flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    out_2 = cv2.drawKeypoints(image_2.copy(), kpts_2, image_2.copy(), flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    out_1 = cv2.drawKeypoints(
+        image_1.copy(),
+        kpts_1,
+        image_1.copy(),
+        flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS,
+    )
+    out_2 = cv2.drawKeypoints(
+        image_2.copy(),
+        kpts_2,
+        image_2.copy(),
+        flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS,
+    )
 
     query: list[int] = queryIdx.tolist()
     train: list[int] = trainIdx.tolist()

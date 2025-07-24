@@ -56,7 +56,13 @@ class SingleCamera:
 
 
 class StereoCamera:
-    def __init__(self, R_1: np.ndarray, t_1: np.ndarray, R_0: np.ndarray = None, t_0: np.ndarray = None):
+    def __init__(
+        self,
+        R_1: np.ndarray,
+        t_1: np.ndarray,
+        R_0: np.ndarray = None,
+        t_0: np.ndarray = None,
+    ):
         self.update(
             R_1=R_1,
             t_1=t_1,
@@ -65,7 +71,13 @@ class StereoCamera:
         )
         self.pts_3D = None
 
-    def update(self, R_1: np.ndarray, t_1: np.ndarray, R_0: np.ndarray = None, t_0: np.ndarray = None):
+    def update(
+        self,
+        R_1: np.ndarray,
+        t_1: np.ndarray,
+        R_0: np.ndarray = None,
+        t_0: np.ndarray = None,
+    ):
         self.cam_0 = SingleCamera(
             K=K,
             distortion=np.zeros(5),
@@ -151,7 +163,9 @@ def NMS(keypoints: list[cv2.KeyPoint], radius: int) -> np.ndarray:
     return sorted_indices[keep_mask]
 
 
-def SIFT(img: np.ndarray | torch.Tensor) -> tuple[np.ndarray, np.ndarray[cv2.KeyPoint], np.ndarray]:
+def SIFT(
+    img: np.ndarray | torch.Tensor,
+) -> tuple[np.ndarray, np.ndarray[cv2.KeyPoint], np.ndarray]:
 
     if isinstance(img, torch.Tensor):
         img = img.numpy().astype(np.uint8)
@@ -190,7 +204,15 @@ def get_src_dst_pts(
 
 
 def to_cv2KeyPoint(data: KeyPoint) -> cv2.KeyPoint:
-    return cv2.KeyPoint(data.pt[0], data.pt[1], data.size, data.angle, data.response, data.octave, data.class_id)
+    return cv2.KeyPoint(
+        data.pt[0],
+        data.pt[1],
+        data.size,
+        data.angle,
+        data.response,
+        data.octave,
+        data.class_id,
+    )
 
 
 def estimate_fundamental_matrix(points1: np.ndarray, points2: np.ndarray) -> np.ndarray:
@@ -261,7 +283,11 @@ def fundamental_ransac(
 
 
 def get_optimal_E(
-    E: np.ndarray, src_pts: np.ndarray, dst_pts: np.ndarray, K: np.ndarray, mask: np.ndarray
+    E: np.ndarray,
+    src_pts: np.ndarray,
+    dst_pts: np.ndarray,
+    K: np.ndarray,
+    mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
 
     _, R_out, t_out, mask = cv2.recoverPose(E, src_pts, dst_pts, K, mask=mask)
@@ -270,7 +296,11 @@ def get_optimal_E(
 
 
 def find_optimal_E(
-    E: np.ndarray, src_pts: np.ndarray, dst_pts: np.ndarray, K: np.ndarray, mask: np.ndarray
+    E: np.ndarray,
+    src_pts: np.ndarray,
+    dst_pts: np.ndarray,
+    K: np.ndarray,
+    mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     most_inliers = 0
@@ -278,7 +308,11 @@ def find_optimal_E(
     for e in range(0, E.shape[0], 3):
 
         R_, t_, mask_, inliers = get_optimal_E(
-            E=E[e : e + 3, :].copy(), src_pts=src_pts.copy(), dst_pts=dst_pts.copy(), K=K, mask=mask.copy()
+            E=E[e : e + 3, :].copy(),
+            src_pts=src_pts.copy(),
+            dst_pts=dst_pts.copy(),
+            K=K,
+            mask=mask.copy(),
         )
         if inliers > most_inliers:
             most_inliers = inliers
@@ -333,7 +367,10 @@ def get_pose(
 
 
 def get_pnp_pose(
-    pts_3D: np.ndarray, pts_2D: np.ndarray, dist_coeffs: np.ndarray, mask: np.ndarray = None
+    pts_3D: np.ndarray,
+    pts_2D: np.ndarray,
+    dist_coeffs: np.ndarray,
+    mask: np.ndarray = None,
 ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
 
     if mask is None:
@@ -372,7 +409,11 @@ def get_pnp_pose(
 
 
 def filter_inliers(
-    pts_3D: np.ndarray, pt_2d: np.ndarray, R: np.ndarray, t: np.ndarray, inliers: np.ndarray = None
+    pts_3D: np.ndarray,
+    pt_2d: np.ndarray,
+    R: np.ndarray,
+    t: np.ndarray,
+    inliers: np.ndarray = None,
 ) -> np.ndarray:
 
     N = pts_3D.shape[0]
@@ -419,9 +460,13 @@ def save_pcd(landmarks: np.ndarray, display_colors: np.ndarray, title: str = "pc
     o3d.io.write_point_cloud(os.path.join(__cwd__, output_filename), point_cloud)
 
 
-def extract_camera_poses(
-    estimates, colors: dict[gtsam.Symbol, np.ndarray], scale: int = 1.0
-) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]], list[np.ndarray], list[str], list[np.ndarray]]:
+def extract_camera_poses(estimates, colors: dict[gtsam.Symbol, np.ndarray], scale: int = 1.0) -> tuple[
+    list[tuple[int, int, int]],
+    list[tuple[int, int, int]],
+    list[np.ndarray],
+    list[str],
+    list[np.ndarray],
+]:
 
     landmarks = []
     display_colors = []

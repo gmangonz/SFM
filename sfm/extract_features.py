@@ -43,7 +43,21 @@ def collate_fn(batch) -> tuple[np.ndarray, np.ndarray, list[KeyPoint], np.ndarra
     return x.astype(np.float32) / 255.0, clahe, kpts, descriptors
 
 
-def get_image_loader(image_dir: str):
+def get_image_loader(image_dir: str) -> DataLoader:
+    """
+    Get image loader that iterates though image directory to extract
+    clahe image, keypoints, and descriptors
+
+    Parameters
+    ----------
+    image_dir : str
+        Image directory
+
+    Returns
+    -------
+    DataLoader
+        Data loader.
+    """
 
     dataset = ImageDataset(image_dir, grayscale=not CONFIG.RGB)
     loader = DataLoader(

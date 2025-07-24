@@ -51,12 +51,20 @@ def optimize(G_covisibility: nx.DiGraph, valid_tracks: list[Track]):
 
                 graph.add(
                     gtsam.GenericProjectionFactorCal3_S2(
-                        gtsam.Point2(*src), camera_noise, Camera(camera_0), Landmark(track_obj.track_id), k
+                        gtsam.Point2(*src),
+                        camera_noise,
+                        Camera(camera_0),
+                        Landmark(track_obj.track_id),
+                        k,
                     )
                 )
                 graph.add(
                     gtsam.GenericProjectionFactorCal3_S2(
-                        gtsam.Point2(*dst), camera_noise, Camera(camera_1), Landmark(track_obj.track_id), k
+                        gtsam.Point2(*dst),
+                        camera_noise,
+                        Camera(camera_1),
+                        Landmark(track_obj.track_id),
+                        k,
                     )
                 )
                 graph.add(

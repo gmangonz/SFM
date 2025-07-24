@@ -32,7 +32,13 @@ class Track:
         self._edge2dst = defaultdict(lambda: np.array([-1.0, -1.0]))
 
     def update_triangulated(
-        self, camera_0: int, camera_1: int, pt_3D: np.ndarray, is_inlier: bool, src: np.ndarray, dst: np.ndarray
+        self,
+        camera_0: int,
+        camera_1: int,
+        pt_3D: np.ndarray,
+        is_inlier: bool,
+        src: np.ndarray,
+        dst: np.ndarray,
     ):
         _edge = (camera_0, camera_1)
         assert self.cam2featureIdx.get(camera_0, None) is not None, f"{camera_0} is not a valid camera in {self.track}."
@@ -58,10 +64,23 @@ class Track:
         return list(self._edge2pt.keys())
 
     def get_edge(self, edge) -> tuple[tuple[np.ndarray, np.ndarray], np.ndarray, bool]:
-        return (self._edge2src[edge], self._edge2dst[edge]), self._edge2pt[edge], self._edge2inlier[edge]
+        return (
+            (self._edge2src[edge], self._edge2dst[edge]),
+            self._edge2pt[edge],
+            self._edge2inlier[edge],
+        )
 
     def __len__(self) -> int:
         return len(self.track)
+
+
+@dataclass
+class QueryTrainTracks:
+    queryIdx_tracks: np.ndarray
+    trainIdx_tracks: np.ndarray
+    pts_3D_ref: np.ndarray
+    valid_pts_3D: np.ndarray
+    track_objs: list[Track]
 
 
 def get_edge_with_largest_weight(G: nx.DiGraph | nx.Graph) -> tuple[int, int]:
@@ -382,7 +401,9 @@ def obtrain_tracks(
 
 
 def get_common_track_IDs(
-    new_edge: tuple[int, int], camera2trackIDs: dict[int, list[int]], reference_edge: tuple[int, int] = None
+    new_edge: tuple[int, int],
+    camera2trackIDs: dict[int, list[int]],
+    reference_edge: tuple[int, int] = None,
 ) -> set[int]:
     """
     Retrieves the common track IDs that are seen by the new edge and,
@@ -417,7 +438,7 @@ def get_query_and_train(
     camera2trackIDs: dict[int, list[int]],
     is_initial_edge: bool = True,
     reference_edge: tuple[int, int] = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[Track]]:
+) -> QueryTrainTracks:
     """
     Given the input edges, where an edge represents 2 cameras, will retrieve the
     track IDs that pass through, i.e, tracks that contain all the cameras desired.
@@ -441,7 +462,7 @@ def get_query_and_train(
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[Track]]
+    QueryTrainTracks
         Query indices, train indices, 3D points, valid 3D points, and track objects.
         If is_initial_edge is False, then queryIdx and trainIdx will span all the edges passed.
     """
@@ -464,13 +485,13 @@ def get_query_and_train(
         for track_id in common_track_IDs
     ]
     if len(indices) == 0:
-        return np.array([]), np.array([]), np.array([]), np.array([]), []
+        return QueryTrainTracks(np.array([]), np.array([]), np.array([]), np.array([]), [])
 
     track_objs, queryIdx, trainIdx, pts_3D, pts_3D_valid = zip(*indices)
-    return (
-        np.asarray(queryIdx).squeeze(),
-        np.asarray(trainIdx).squeeze(),
-        np.asarray(pts_3D).squeeze(),
-        np.asarray(pts_3D_valid).squeeze(),
-        track_objs,
+    return QueryTrainTracks(
+        queryIdx_tracks=np.asarray(queryIdx).squeeze(),
+        trainIdx_tracks=np.asarray(trainIdx).squeeze(),
+        pts_3D_ref=np.asarray(pts_3D).squeeze(),
+        valid_pts_3D=np.asarray(pts_3D_valid).squeeze(),
+        track_objs=track_objs,
     )

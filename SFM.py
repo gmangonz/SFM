@@ -48,7 +48,14 @@ def preprocess() -> tuple[nx.DiGraph, nx.DiGraph, list[ImageData]]:
     img_loader = get_image_loader(IMG_DIR)
     for idx, (img, clahe, kpt, descriptors) in enumerate(tqdm.tqdm(img_loader, desc="Extracting features")):
         image_data.append(
-            ImageData(image=img, rgb=img, filename=f"image_{idx}", keypoints=kpt, features=descriptors, clahe_img=clahe)
+            ImageData(
+                image=img,
+                rgb=img,
+                filename=f"image_{idx}",
+                keypoints=kpt,
+                features=descriptors,
+                clahe_img=clahe,
+            )
         )
 
     pair_loader = get_image_matcher_loader(image_data)
@@ -104,8 +111,11 @@ def run_reconstruction(
 ):
 
     # Get corresponding source and destination points
-    queryIdx_init, trainIdx_init, _, _, track_objs = get_query_and_train(init_edge, tracks, camera2trackIDs)
-    src_pts, dst_pts = get_src_dst_pts(*init_edge, queryIdx_init, trainIdx_init, image_data)
+    query_train_tracks = get_query_and_train(init_edge, tracks, camera2trackIDs)
+    breakpoint()
+    src_pts, dst_pts = get_src_dst_pts(
+        *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
+    )
 
     # Get pose of initial 2 cameras and triangulate to get 3D points
     _, _, _, R_out, t_out = get_pose(src_pts, dst_pts)
@@ -114,17 +124,29 @@ def run_reconstruction(
     inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
     inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
 
+    breakpoint()
     logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
     if plot_images:
-        plot_matches(image_data[init_edge[0]], image_data[init_edge[1]], queryIdx_init, trainIdx_init, inliers)
+        plot_matches(
+            image_data[init_edge[0]],
+            image_data[init_edge[1]],
+            query_train_tracks.queryIdx_tracks,
+            query_train_tracks.trainIdx_tracks,
+            inliers,
+        )
 
     # Update G_covisibility and relevant tracks
-    G_covisibility.add_edges_from([init_edge], num_pts_3D=sum(inliers), stereo_camera=stereo_camera, processed=True)
+    G_covisibility.add_edges_from(
+        [init_edge],
+        num_pts_3D=sum(inliers),
+        stereo_camera=stereo_camera,
+        processed=True,
+    )
     update_tracks(
         tracks=tracks,
         node2trackID=node2trackID,
         new_edge=init_edge,
-        queryIdx=queryIdx_init,
+        queryIdx=query_train_tracks.queryIdx_tracks,
         pts_3D=pts_3D_out,
         inliers=inliers,
         src_pts=src_pts,
@@ -138,22 +160,29 @@ def run_reconstruction(
         )
 
         # Get corresponding source and destination points that span all cameras in reference_edge and new_edge
-        queryIdx_tracks, trainIdx_tracks, pts_3D_ref, valid_pts_3D, track_objs = get_query_and_train(
+        query_train_tracks = get_query_and_train(
             new_edge=new_edge,
             tracks=tracks,
             camera2trackIDs=camera2trackIDs,
             is_initial_edge=False,
             reference_edge=reference_edge,
         )
-        if queryIdx_tracks.size == 0:
+        if query_train_tracks.queryIdx_tracks.size == 0:
             G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
             logger.info(f"Not enough query/train points for {new_edge}.")
             continue
 
         # Get pose of the new camera using the reference triangulated points for PnP
-        src_pts_tracks, dst_pts_tracks = get_src_dst_pts(*new_edge, queryIdx_tracks, trainIdx_tracks, image_data)
+        src_pts_tracks, dst_pts_tracks = get_src_dst_pts(
+            *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
+        )
+        breakpoint()
+
         R_out, t_out, _ = get_pnp_pose(
-            pts_3D_ref, dst_pts_tracks if edge_loc == "successor" else src_pts_tracks, np.zeros(5), mask=valid_pts_3D
+            query_train_tracks.pts_3D_ref,
+            dst_pts_tracks if edge_loc == "successor" else src_pts_tracks,
+            np.zeros(5),
+            mask=query_train_tracks.valid_pts_3D,
         )
         if R_out is None:
             G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
@@ -167,15 +196,23 @@ def run_reconstruction(
         # Triangulate to get 3D points
         reference_stereo_camera: StereoCamera = G_covisibility.edges[reference_edge]["stereo_camera"]
         camera_poses = {
-            "R_1": R_out if edge_loc == "successor" else reference_stereo_camera[index].R,
-            "t_1": t_out if edge_loc == "successor" else reference_stereo_camera[index].t,
-            "R_0": reference_stereo_camera[index].R if edge_loc == "successor" else R_out,
-            "t_0": reference_stereo_camera[index].t if edge_loc == "successor" else t_out,
+            "R_1": (R_out if edge_loc == "successor" else reference_stereo_camera[index].R),
+            "t_1": (t_out if edge_loc == "successor" else reference_stereo_camera[index].t),
+            "R_0": (reference_stereo_camera[index].R if edge_loc == "successor" else R_out),
+            "t_0": (reference_stereo_camera[index].t if edge_loc == "successor" else t_out),
         }
         stereo_camera = StereoCamera(**camera_poses)
         pts_3D_out = stereo_camera.triangulate(src_pts, dst_pts)
         inliers = filter_inliers(pts_3D_out, dst_pts, camera_poses["R_1"], camera_poses["t_1"])
-        inliers = filter_inliers(pts_3D_out, src_pts, camera_poses["R_0"], camera_poses["t_0"], inliers=inliers)
+        inliers = filter_inliers(
+            pts_3D_out,
+            src_pts,
+            camera_poses["R_0"],
+            camera_poses["t_0"],
+            inliers=inliers,
+        )
+        breakpoint()  # FIXME: THIS IS HIGHER, WHY IS THIS CORRECT?
+        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
 
         # Update G_covisibility and relevant tracks
         G_covisibility.add_edges_from([new_edge], num_pts_3D=sum(inliers), stereo_camera=stereo_camera)
@@ -190,9 +227,14 @@ def run_reconstruction(
             dst_pts=dst_pts,
         )
 
-        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
         if plot_images:
-            plot_matches(image_data[new_edge[0]], image_data[new_edge[1]], queryIdx_full, trainIdx_full, inliers)
+            plot_matches(
+                image_data[new_edge[0]],
+                image_data[new_edge[1]],
+                queryIdx_full,
+                trainIdx_full,
+                inliers,
+            )
 
 
 if __name__ == "__main__":
@@ -223,7 +265,10 @@ if __name__ == "__main__":
         help="Edge threshold for SIFT (default: %(default)s).",
     )
     parser.add_argument(
-        "--sigma", type=float, default=CONFIG.sigma, help="Sigma for Gaussian blur in SIFT (default: %(default)s)."
+        "--sigma",
+        type=float,
+        default=CONFIG.sigma,
+        help="Sigma for Gaussian blur in SIFT (default: %(default)s).",
     )
     parser.add_argument(
         "--threshold",

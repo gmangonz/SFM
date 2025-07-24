@@ -18,7 +18,12 @@ class DMatch:
 
 
 class MatchingDataset(Dataset):
-    def __init__(self, possible_pairs: list[tuple[int, int]], image_data: list[ImageData], threshold: float):
+    def __init__(
+        self,
+        possible_pairs: list[tuple[int, int]],
+        image_data: list[ImageData],
+        threshold: float,
+    ):
         super(MatchingDataset, self).__init__()
 
         self.possible_pairs = possible_pairs
@@ -52,7 +57,20 @@ class MatchingDataset(Dataset):
         return len(self.possible_pairs)
 
 
-def get_image_matcher_loader(image_data: list[ImageData]):
+def get_image_matcher_loader(image_data: list[ImageData]) -> DataLoader:
+    """
+    Data loader to iterate through all image pairs.
+
+    Parameters
+    ----------
+    image_data : list[ImageData]
+        List of image data that will be iterated through using r-length combinations.
+
+    Returns
+    -------
+    DataLoader
+        Data loader.
+    """
 
     pairs = list(combinations(range(len(image_data)), 2))
     dataset = MatchingDataset(possible_pairs=pairs, image_data=image_data, threshold=CONFIG.threshold)
