@@ -57,6 +57,21 @@ class MatchingDataset(Dataset):
         return len(self.possible_pairs)
 
 
+def to_homogeneous(p):
+    return np.pad(p, ((0, 0),) * (p.ndim - 1) + ((0, 1),), constant_values=1)
+
+
+def compute_epipolar_errors(E: np.ndarray, src_pts: np.ndarray, dst_pts: np.ndarray):
+
+    l2d_j = to_homogeneous(src_pts) @ E.T
+    l2d_i = to_homogeneous(dst_pts) @ E
+
+    dist = np.abs(np.sum(to_homogeneous(src_pts) * l2d_i, axis=1))
+    errors_i = dist / np.linalg.norm(l2d_i[:, :2], axis=1)
+    errors_j = dist / np.linalg.norm(l2d_j[:, :2], axis=1)
+    return errors_i, errors_j
+
+
 def get_image_matcher_loader(image_data: list[ImageData]) -> DataLoader:
     """
     Data loader to iterate through all image pairs.
