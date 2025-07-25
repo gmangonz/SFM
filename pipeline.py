@@ -93,7 +93,7 @@ class SFMPipeline:
             G=self.G_tracks, method=self.track_extraction_method
         )
 
-    def __get_edge_relation(self, new_edge: tuple[int, int], reference_edge: tuple[int, int]) -> tuple[str, int]:
+    def __get_edge_relation(self, reference_edge: tuple[int, int], new_edge: tuple[int, int]) -> tuple[str, int]:
         """
         Get the relation of the new edge with respect to the reference edge. Relations can go as follows:
 
@@ -121,9 +121,9 @@ class SFMPipeline:
 
         Parameters
         ----------
-        new_edge : tuple[int, int]
-            _description_
         reference_edge : tuple[int, int]
+            _description_
+        new_edge : tuple[int, int]
             _description_
 
         Returns
@@ -219,7 +219,6 @@ class SFMPipeline:
         src_pts_tracks, dst_pts_tracks = get_src_dst_pts(
             *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, self.image_data
         )
-        breakpoint()
 
         if is_initial_edge:
             # Get pose using Essential Matrix
@@ -302,7 +301,6 @@ class SFMPipeline:
             inliers=inliers,
         )
 
-        breakpoint()
         logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")  # FIXME: THIS IS GIVING LOWER NUMBER
         return queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera
 
@@ -337,7 +335,6 @@ class SFMPipeline:
         src_pts, dst_pts = get_src_dst_pts(
             *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, self.image_data
         )
-        breakpoint()
 
         # Get pose of initial 2 cameras and triangulate to get 3D points
         _, _, _, R_out, t_out = get_pose(src_pts, dst_pts)
@@ -346,7 +343,6 @@ class SFMPipeline:
         inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
         inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
 
-        breakpoint()
         logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
         if self.plot_images:
             plot_matches(
@@ -492,7 +488,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     CONFIG.update(vars(args))
 
-    sfm = SFMPipeline("/run/media/gman/Elements/personal/DL-CV-ML Projects/SFM/images/")
+    __cwd__ = os.path.dirname(__file__)
+
+    sfm = SFMPipeline(os.path.join(__cwd__, "images"))
     sfm.run(init_edge=(7, 8))
 
     # Optimize

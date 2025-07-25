@@ -112,7 +112,6 @@ def run_reconstruction(
 
     # Get corresponding source and destination points
     query_train_tracks = get_query_and_train(init_edge, tracks, camera2trackIDs)
-    breakpoint()
     src_pts, dst_pts = get_src_dst_pts(
         *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
     )
@@ -124,7 +123,6 @@ def run_reconstruction(
     inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
     inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
 
-    breakpoint()
     logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
     if plot_images:
         plot_matches(
@@ -176,7 +174,6 @@ def run_reconstruction(
         src_pts_tracks, dst_pts_tracks = get_src_dst_pts(
             *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
         )
-        breakpoint()
 
         R_out, t_out, _ = get_pnp_pose(
             query_train_tracks.pts_3D_ref,
@@ -211,7 +208,6 @@ def run_reconstruction(
             camera_poses["t_0"],
             inliers=inliers,
         )
-        breakpoint()  # FIXME: THIS IS HIGHER, WHY IS THIS CORRECT?
         logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
 
         # Update G_covisibility and relevant tracks
@@ -336,7 +332,8 @@ if __name__ == "__main__":
 
     # Preprocessing
     G_tracks, G_covisibility, image_data = preprocess()
-    tracks, camera2trackIDs, node2trackID = obtrain_tracks(G_tracks, method=args.method)
+    tracks, camera2trackIDs, node2trackID = obtrain_tracks(G_tracks, method=CONFIG.method)
+    # TODO: Not sure I like node2trackID
 
     # Get initial edge
     init_edge = (7, 8)  # get_edge_with_largest_weight(G_covisibility)
