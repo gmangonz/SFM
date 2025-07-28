@@ -301,7 +301,7 @@ class SFMPipeline:
             inliers=inliers,
         )
 
-        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")  # FIXME: THIS IS GIVING LOWER NUMBER
+        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
         return queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera
 
     def __update_tracks(
