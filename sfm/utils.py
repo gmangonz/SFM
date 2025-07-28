@@ -431,6 +431,50 @@ def filter_inliers(
 
 
 def get_edge_relation(reference_edge: tuple[int, int], new_edge: tuple[int, int]) -> tuple[str, int]:
+    """
+    Get the relation of the new edge with respect to the reference edge. Relations can go as follows:
+
+        - New camera (new_edge_1) is successor from reference's index 1
+        [ref_edge_0, ref_edge_1] ----> [new_edge_0, new_edge_1]
+
+        - New camera (new_edge_0) is predecessor from reference's index 1
+        [ref_edge_0, ref_edge_1]
+                        |
+                        ↓
+        [new_edge_0, new_edge_1]
+
+        - New camera (new_edge_1) is successor from reference's index 0
+        [ref_edge_0, ref_edge_1]
+            |
+            ↓
+        [new_edge_0, new_edge_1]
+
+        - New camera (new_edge_0) is predecessor from reference's index 0
+        [ref_edge_0, ref_edge_1]
+            |
+            ------------
+                        ↓
+        [new_edge_0, new_edge_1]
+
+    Parameters
+    ----------
+    reference_edge : tuple[int, int]
+        _description_
+    new_edge : tuple[int, int]
+        _description_
+
+    Returns
+    -------
+    tuple[str, int]
+        _description_
+
+    Raises
+    ------
+    ValueError
+        _description_
+    ValueError
+        _description_
+    """
 
     if not isinstance(reference_edge, tuple):
         raise ValueError(f"Expected reference_edge to be a tuple, got {type(reference_edge)} instead.")
