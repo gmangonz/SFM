@@ -11,18 +11,8 @@ import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sfm.config import CONFIG
-from sfm.covisibility import (
-    Track,
-    add_to_covisibility_graph,
-    add_to_tracks_graph,
-    get_common_track_IDs,
-    get_edge_with_largest_weight,
-    get_next_edge,
-    get_query_and_train,
-    obtrain_tracks,
-)
+from sfm.covisibility import CovisibilityGraph, QueryTrainTracks
 from sfm.extract_features import get_image_loader
-from sfm.image_matching import get_image_matcher_loader
 from sfm.sparse_reconstruction import optimize
 from sfm.utils import (
     ImageData,
@@ -31,173 +21,152 @@ from sfm.utils import (
     get_edge_relation,
     get_pnp_pose,
     get_pose,
-    get_src_dst_pts,
     logger,
 )
 from sfm.visualization import plot_matches
 
-IMG_DIR = Path(__file__).parent / "images"
 
+class SFMPipeline(CovisibilityGraph):
+    def __init__(self, image_dir: str, plot_images: bool = False, track_extraction_method: str = "dijkstra"):
 
-def preprocess() -> tuple[nx.DiGraph, nx.DiGraph, list[ImageData]]:
+        self.image_dir = image_dir
+        self.plot_images = plot_images
+        self.track_extraction_method = track_extraction_method
 
-    image_data: list[ImageData] = []
-    G_tracks = nx.DiGraph()
-    G_covisibility = nx.DiGraph()
+        self.image_data: list[ImageData] = []
+        self.__preprocess()
 
-    img_loader = get_image_loader(IMG_DIR)
-    for idx, (img, clahe, kpt, descriptors) in enumerate(tqdm.tqdm(img_loader, desc="Extracting features")):
-        image_data.append(
-            ImageData(
-                image=img,
-                rgb=img,
-                filename=f"image_{idx}",
-                keypoints=kpt,
-                features=descriptors,
-                clahe_img=clahe,
+    def __preprocess(self) -> tuple[nx.DiGraph, nx.DiGraph, list[ImageData]]:
+
+        img_loader = get_image_loader(self.image_dir)
+        for idx, (img, clahe, kpt, descriptors) in enumerate(tqdm.tqdm(img_loader, desc="Extracting features")):
+            self.image_data.append(
+                ImageData(
+                    image=img,
+                    rgb=img,
+                    filename=f"image_{idx}",
+                    keypoints=kpt,
+                    features=descriptors,
+                    clahe_img=clahe,
+                )
             )
+        super().__init__(self.image_data, self.track_extraction_method)
+
+    def __get_src_dst_pts(
+        self,
+        camera_0: int,
+        camera_1: int,
+        queryIdx: np.ndarray,
+        trainIdx: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        image_0 = self.image_data[camera_0]
+        image_1 = self.image_data[camera_1]
+
+        src_pts = image_0.keypoints_np[queryIdx]
+        dst_pts = image_1.keypoints_np[trainIdx]
+        assert len(src_pts) == len(dst_pts), "Length of queryIdx and trainIdx need to match!"
+        return src_pts, dst_pts
+
+    def __get_cam_pose_from_reference(
+        self,
+        new_edge: tuple[int, int],
+        is_initial_edge: bool,
+        query_train_tracks: QueryTrainTracks,
+        edge_loc: str | None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        Get pose of the new camera using the reference triangulated points for PnP.
+
+        Parameters
+        ----------
+        new_edge : tuple[int, int]
+            _description_
+        is_initial_edge : bool
+            _description_
+        query_train_tracks : QueryTrainTracks
+            _description_
+        edge_loc : str
+            _description_
+
+        Returns
+        -------
+        tuple[np.ndarray | None, np.ndarray | None]
+            Rotation and translation of new camera
+        """
+        src_pts_tracks, dst_pts_tracks = self.__get_src_dst_pts(
+            *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks
         )
 
-    pair_loader = get_image_matcher_loader(image_data)
-    for idx, [(camera_0, camera_1, matches)] in enumerate(tqdm.tqdm(pair_loader, desc="Matching features")):
-        G_tracks = add_to_tracks_graph(G_tracks, camera_0, camera_1, matches)
-        G_covisibility = add_to_covisibility_graph(G_covisibility, camera_0, camera_1, matches)
-
-    return G_tracks, G_covisibility, image_data
-
-
-def update_tracks(
-    tracks: list[Track],
-    node2trackID: dict[tuple[int, int], list[int]],
-    new_edge: tuple[int, int],
-    queryIdx: np.ndarray,
-    pts_3D: np.ndarray,
-    inliers: np.ndarray,
-    src_pts: np.ndarray,
-    dst_pts: np.ndarray,
-):
-    assert len(queryIdx) == len(pts_3D) == len(inliers) == len(src_pts) == len(dst_pts)
-    for query, pt_3D, inlier, src, dst in zip(queryIdx, pts_3D, inliers, src_pts, dst_pts):
-        trackIDs_from_cam_and_query = node2trackID[(new_edge[0], query)]
-        for track_id in trackIDs_from_cam_and_query:
-            track_obj = tracks[track_id]
-            if new_edge[1] in track_obj.cameras:
-                track_obj.update_triangulated(*new_edge, pt_3D, inlier, src, dst)
-
-    # common_track_IDs = get_common_track_IDs(new_edge, camera2trackIDs)
-    # queryIdx2point3d = dict(zip(queryIdx_full, pts_3D_out))
-    # queryIdx2inliers = dict(zip(queryIdx_full, inliers))
-    # _cam = new_edge[0]
-    # for track_id in common_track_IDs:
-    #     track_obj = tracks[track_id]
-    #     _queryIdx = track_obj.cam2featureIdx[_cam]
-
-    #     _pt_3D = queryIdx2point3d.get(_queryIdx, None)
-    #     _inlier = queryIdx2inliers.get(_queryIdx, None)
-    #     if _pt_3D is None:
-    #         continue
-    #     track_obj.update_triangulated(*new_edge, _pt_3D, _inlier)
-    # print(f"Updated: {_num} tracks out of {len(common_track_IDs)} common tracks and {len(queryIdx_full)} queries.")
-
-
-def run_reconstruction(
-    image_data: list[ImageData],
-    G_covisibility: nx.DiGraph,
-    init_edge: tuple[int, int],
-    tracks: list[Track],
-    camera2trackIDs: dict[int, list[int]],
-    node2trackID: dict[tuple[int, int], list[int]],
-    plot_images: bool = False,
-):
-
-    # Get corresponding source and destination points
-    query_train_tracks = get_query_and_train(init_edge, tracks, camera2trackIDs)
-    src_pts, dst_pts = get_src_dst_pts(
-        *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
-    )
-
-    # Get pose of initial 2 cameras and triangulate to get 3D points
-    _, _, _, R_out, t_out = get_pose(src_pts, dst_pts)
-    stereo_camera = StereoCamera(R_1=R_out, t_1=t_out)
-    pts_3D_out = stereo_camera.triangulate(src_pts, dst_pts)
-    inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
-    inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
-
-    logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
-    if plot_images:
-        plot_matches(
-            image_data[init_edge[0]],
-            image_data[init_edge[1]],
-            query_train_tracks.queryIdx_tracks,
-            query_train_tracks.trainIdx_tracks,
-            inliers,
-        )
-
-    # Update G_covisibility and relevant tracks
-    G_covisibility.add_edges_from(
-        [init_edge],
-        num_pts_3D=sum(inliers),
-        stereo_camera=stereo_camera,
-        processed=True,
-    )
-    update_tracks(
-        tracks=tracks,
-        node2trackID=node2trackID,
-        new_edge=init_edge,
-        queryIdx=query_train_tracks.queryIdx_tracks,
-        pts_3D=pts_3D_out,
-        inliers=inliers,
-        src_pts=src_pts,
-        dst_pts=dst_pts,
-    )
-
-    for ref_num_pts, ref_weight, reference_edge, new_edge in get_next_edge(G_covisibility, init_edge=init_edge):
-        edge_loc, index = get_edge_relation(reference_edge, new_edge)
-        logger.info(
-            f"Evaluating edge: {new_edge} with reference: {reference_edge} with num_pts: {-ref_num_pts} and weight: {-ref_weight}"
-        )
-
-        # Get corresponding source and destination points that span all cameras in reference_edge and new_edge
-        query_train_tracks = get_query_and_train(
-            new_edge=new_edge,
-            tracks=tracks,
-            camera2trackIDs=camera2trackIDs,
-            is_initial_edge=False,
-            reference_edge=reference_edge,
-        )
-        if query_train_tracks.queryIdx_tracks.size == 0:
-            G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
-            logger.info(f"Not enough query/train points for {new_edge}.")
-            continue
-
-        # Get pose of the new camera using the reference triangulated points for PnP
-        src_pts_tracks, dst_pts_tracks = get_src_dst_pts(
-            *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, image_data
-        )
-
-        R_out, t_out, _ = get_pnp_pose(
-            query_train_tracks.pts_3D_ref,
-            dst_pts_tracks if edge_loc == "successor" else src_pts_tracks,
-            np.zeros(5),
-            mask=query_train_tracks.valid_pts_3D,
-        )
+        if is_initial_edge:
+            # Get pose using Essential Matrix
+            _, _, _, R_out, t_out = get_pose(src_pts_tracks, dst_pts_tracks)
+        else:
+            # Get pose using PnP
+            R_out, t_out, _ = get_pnp_pose(
+                query_train_tracks.pts_3D_ref,
+                dst_pts_tracks if edge_loc == "successor" else src_pts_tracks,
+                np.zeros(5),
+                mask=query_train_tracks.valid_pts_3D,
+            )
         if R_out is None:
-            G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
+            self.G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
             logger.info(f"Could not retrieve valid pose for {new_edge}.")
-            continue
+            return None, None
 
+        return R_out, t_out
+
+    def __triangulate_from_reference(
+        self,
+        new_edge: tuple[int, int],
+        is_initial_edge: bool,
+        R_out: np.ndarray,
+        t_out: np.ndarray,
+        reference_edge: tuple[int, int] | None,
+        edge_loc: str | None,
+        index: int | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, StereoCamera]:
+        """
+        Obtains matched source and destination points between cameras in new_edge. Uses a reference edge
+        to get an established StereoCamera that is used to triangulate the source and destination points
+        as stereo cameras.
+
+        Parameters
+        ----------
+        new_edge : tuple[int, int]
+            _description_
+        is_initial_edge : bool
+            _description_
+        R_out : np.ndarray
+            _description_
+        t_out : np.ndarray
+            _description_
+        reference_edge : tuple[int, int] | None
+            _description_
+        edge_loc : str | None
+            _description_
+        index : int | None
+            _description_
+
+        Returns
+        -------
+        tuple[np.ndarray, StereoCamera]
+            Inliers and new stereo camera.
+        """
         # Get corresponding source and destination points between cameras in new_edge
-        queryIdx_full, trainIdx_full = G_covisibility.edges[new_edge]["query_train"]
-        src_pts, dst_pts = get_src_dst_pts(*new_edge, queryIdx_full, trainIdx_full, image_data)
+        queryIdx_full, trainIdx_full = self.G_covisibility.edges[new_edge]["query_train"]
+        src_pts, dst_pts = self.__get_src_dst_pts(*new_edge, queryIdx_full, trainIdx_full)
 
         # Triangulate to get 3D points
-        reference_stereo_camera: StereoCamera = G_covisibility.edges[reference_edge]["stereo_camera"]
-        camera_poses = {
-            "R_1": (R_out if edge_loc == "successor" else reference_stereo_camera[index].R),
-            "t_1": (t_out if edge_loc == "successor" else reference_stereo_camera[index].t),
-            "R_0": (reference_stereo_camera[index].R if edge_loc == "successor" else R_out),
-            "t_0": (reference_stereo_camera[index].t if edge_loc == "successor" else t_out),
-        }
+        if is_initial_edge:
+            camera_poses = {"R_1": R_out, "t_1": t_out, "R_0": np.eye(3), "t_0": np.zeros(3)}
+        else:
+            reference_stereo_camera: StereoCamera = self.G_covisibility.edges[reference_edge]["stereo_camera"]
+            camera_poses = {
+                "R_1": (R_out if edge_loc == "successor" else reference_stereo_camera[index].R),
+                "t_1": (t_out if edge_loc == "successor" else reference_stereo_camera[index].t),
+                "R_0": (reference_stereo_camera[index].R if edge_loc == "successor" else R_out),
+                "t_0": (reference_stereo_camera[index].t if edge_loc == "successor" else t_out),
+            }
         stereo_camera = StereoCamera(**camera_poses)
         pts_3D_out = stereo_camera.triangulate(src_pts, dst_pts)
         inliers = filter_inliers(pts_3D_out, dst_pts, camera_poses["R_1"], camera_poses["t_1"])
@@ -208,29 +177,69 @@ def run_reconstruction(
             camera_poses["t_0"],
             inliers=inliers,
         )
-        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
 
-        # Update G_covisibility and relevant tracks
-        G_covisibility.add_edges_from([new_edge], num_pts_3D=sum(inliers), stereo_camera=stereo_camera)
-        update_tracks(
-            tracks=tracks,
-            node2trackID=node2trackID,
-            new_edge=new_edge,
-            queryIdx=queryIdx_full,
-            pts_3D=pts_3D_out,
-            inliers=inliers,
-            src_pts=src_pts,
-            dst_pts=dst_pts,
+        logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
+        return queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera
+
+    def run(self, init_edge: tuple[int, int]):
+
+        query_train_tracks = super().get_camera_span_from_edge(init_edge, True, None)
+        src_pts, dst_pts = self.__get_src_dst_pts(
+            *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks
         )
 
-        if plot_images:
+        # Get pose of initial 2 cameras and triangulate to get 3D points
+        _, _, _, R_out, t_out = get_pose(src_pts, dst_pts)
+        stereo_camera = StereoCamera(R_1=R_out, t_1=t_out)
+        pts_3D_out = stereo_camera.triangulate(src_pts, dst_pts)
+        inliers = filter_inliers(pts_3D_out, dst_pts, R_out, t_out)
+        inliers = filter_inliers(pts_3D_out, src_pts, np.eye(3), np.zeros(3), inliers=inliers)
+
+        logger.info(f"Edge: {init_edge} has {sum(inliers)} inliers.")
+        if self.plot_images:
             plot_matches(
-                image_data[new_edge[0]],
-                image_data[new_edge[1]],
-                queryIdx_full,
-                trainIdx_full,
+                self.image_data[init_edge[0]],
+                self.image_data[init_edge[1]],
+                query_train_tracks.queryIdx_tracks,
+                query_train_tracks.trainIdx_tracks,
                 inliers,
             )
+
+        # Update tracks with init_edge
+        attrs = dict(num_pts_3D=sum(inliers), stereo_camera=stereo_camera, processed=True)
+        self.G_covisibility.add_edges_from([init_edge], **attrs)
+        self.tracks.update_tracks(init_edge, query_train_tracks.queryIdx_tracks, pts_3D_out, inliers, src_pts, dst_pts)
+
+        for ref_num_pts, ref_weight, reference_edge, new_edge in super().get_next_edge(init_edge):
+            logger.info(f"Evaluating edge: {new_edge} with reference: {reference_edge}")
+            edge_loc, index = get_edge_relation(reference_edge, new_edge)
+            logger.info(f"Details - num_pts: {-ref_num_pts} and weight: {-ref_weight}")
+
+            query_train_tracks = super().get_camera_span_from_edge(new_edge, False, reference_edge)
+            if query_train_tracks is None:
+                continue
+
+            R_out, t_out = self.__get_cam_pose_from_reference(new_edge, False, query_train_tracks, edge_loc)
+            if R_out is None:
+                continue
+
+            queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera = (
+                self.__triangulate_from_reference(new_edge, False, R_out, t_out, reference_edge, edge_loc, index)
+            )
+
+            # Update tracks with new_edge
+            attrs = dict(num_pts_3D=sum(inliers), stereo_camera=stereo_camera)
+            self.G_covisibility.add_edges_from([new_edge], **attrs)
+            self.tracks.update_tracks(new_edge, queryIdx_full, pts_3D_out, inliers, src_pts, dst_pts)
+
+            if self.plot_images:
+                plot_matches(
+                    self.image_data[new_edge[0]],
+                    self.image_data[new_edge[1]],
+                    queryIdx_full,
+                    trainIdx_full,
+                    inliers,
+                )
 
 
 if __name__ == "__main__":
@@ -330,29 +339,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     CONFIG.update(vars(args))
 
-    # Preprocessing
-    G_tracks, G_covisibility, image_data = preprocess()
-    tracks, camera2trackIDs, node2trackID = obtrain_tracks(G_tracks, method=CONFIG.method)
-    # TODO: Not sure I like node2trackID
+    __cwd__ = os.path.dirname(__file__)
 
-    # Get initial edge
-    init_edge = (7, 8)  # get_edge_with_largest_weight(G_covisibility)
-
-    # Run reconstruction
-    run_reconstruction(
-        image_data=image_data,
-        G_covisibility=G_covisibility,
-        init_edge=init_edge,
-        tracks=tracks,
-        camera2trackIDs=camera2trackIDs,
-        node2trackID=node2trackID,
-    )
+    sfm = SFMPipeline(os.path.join(__cwd__, "images"))
+    sfm.run(init_edge=(7, 8))
 
     # Optimize
-    valid_tracks = [track_obj for track_obj in tracks if track_obj.is_valid_track(n=2)]
+    valid_tracks = [track_obj for track_obj in sfm.tracks if track_obj.is_valid_track(n=2)]
     valid_tracks = natsort.natsorted(valid_tracks, key=lambda x: x.valid_pts)
     logger.info(f"Number of valid tracks: {len(valid_tracks)}")
-    optimize(
-        G_covisibility,
-        valid_tracks=valid_tracks,
-    )
+    optimize(sfm.G_covisibility, valid_tracks=valid_tracks)

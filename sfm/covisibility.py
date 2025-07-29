@@ -152,7 +152,7 @@ class Tracks(list[Track]):
         # Mapping from camera_id to all tracks (via indices) that contain camera_id
         self.camera2trackIDs: dict[int, list[int]] = defaultdict(list)
         # Mapping of (camera_id, feature_id) to the track ID
-        self.node2trackID: dict[tuple[int, int], list[int]] = defaultdict(list)
+        self.node2trackID: dict[tuple[int, int], list[int]] = defaultdict(list)  # TODO: Not sure I like node2trackID
 
     def __get_common_track_IDs(
         self,
