@@ -11,33 +11,22 @@ import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sfm.config import CONFIG
-from sfm.covisibility import (
-    QueryTrainTracks,
-    Track,
-    add_to_covisibility_graph,
-    add_to_tracks_graph,
-    get_common_track_IDs,
-    get_edge_with_largest_weight,
-    get_next_edge,
-    get_query_and_train,
-    obtrain_tracks,
-)
+from sfm.covisibility import CovisibilityGraph, QueryTrainTracks
 from sfm.extract_features import get_image_loader
-from sfm.image_matching import get_image_matcher_loader
 from sfm.sparse_reconstruction import optimize
 from sfm.utils import (
     ImageData,
     StereoCamera,
     filter_inliers,
+    get_edge_relation,
     get_pnp_pose,
     get_pose,
-    get_src_dst_pts,
     logger,
 )
 from sfm.visualization import plot_matches
 
 
-class SFMPipeline:
+class SFMPipeline(CovisibilityGraph):
     def __init__(self, image_dir: str, plot_images: bool = False, track_extraction_method: str = "dijkstra"):
 
         self.image_dir = image_dir
@@ -45,11 +34,7 @@ class SFMPipeline:
         self.track_extraction_method = track_extraction_method
 
         self.image_data: list[ImageData] = []
-        self.G_tracks = nx.DiGraph()
-        self.G_covisibility = nx.DiGraph()
-
         self.__preprocess()
-        self.__obtain_tracks()
 
     def __preprocess(self) -> tuple[nx.DiGraph, nx.DiGraph, list[ImageData]]:
 
@@ -65,130 +50,22 @@ class SFMPipeline:
                     clahe_img=clahe,
                 )
             )
+        super().__init__(self.image_data, self.track_extraction_method)
 
-        pair_loader = get_image_matcher_loader(self.image_data)
-        for idx, [(camera_0, camera_1, matches)] in enumerate(tqdm.tqdm(pair_loader, desc="Matching features")):
-            self.G_tracks = add_to_tracks_graph(self.G_tracks, camera_0, camera_1, matches)
-            self.G_covisibility = add_to_covisibility_graph(self.G_covisibility, camera_0, camera_1, matches)
-
-    def __obtain_tracks(self):
-        """
-        Obtain the corresponding tracks of feature points. Results are similar
-        to those of: https://imagine.enpc.fr/~moulonp/publis/poster_CVMP12.pdf.
-
-        Parameters
-        ----------
-        G : nx.DiGraph
-            Graph where each node is (camera_id, feature_id).
-
-        Returns
-        -------
-        tuple[list[Track], dict]
-            List of track objects, where each track object contains a sorted list of
-            tuples (camera_id, feature_id) by camera_id.
-            Mapping from camera_id to all track IDs (via indices) that contain camera_id.
-            Mapping of (camera_id, feature_id) to the track ID.
-        """
-        self.tracks, self.camera2trackIDs, self.node2trackID = obtrain_tracks(
-            G=self.G_tracks, method=self.track_extraction_method
-        )
-
-    def __get_edge_relation(self, reference_edge: tuple[int, int], new_edge: tuple[int, int]) -> tuple[str, int]:
-        """
-        Get the relation of the new edge with respect to the reference edge. Relations can go as follows:
-
-            - New camera (new_edge_1) is successor from reference's index 1
-            [ref_edge_0, ref_edge_1] ----> [new_edge_0, new_edge_1]
-
-            - New camera (new_edge_0) is predecessor from reference's index 1
-            [ref_edge_0, ref_edge_1]
-                            |
-                            ↓
-            [new_edge_0, new_edge_1]
-
-            - New camera (new_edge_1) is successor from reference's index 0
-            [ref_edge_0, ref_edge_1]
-                |
-                ↓
-            [new_edge_0, new_edge_1]
-
-            - New camera (new_edge_0) is predecessor from reference's index 0
-            [ref_edge_0, ref_edge_1]
-                |
-                ------------
-                            ↓
-            [new_edge_0, new_edge_1]
-
-        Parameters
-        ----------
-        reference_edge : tuple[int, int]
-            _description_
-        new_edge : tuple[int, int]
-            _description_
-
-        Returns
-        -------
-        tuple[str, int]
-            _description_
-
-        Raises
-        ------
-        ValueError
-            _description_
-        ValueError
-            _description_
-        """
-
-        if not isinstance(reference_edge, tuple):
-            raise ValueError(f"Expected reference_edge to be a tuple, got {type(reference_edge)} instead.")
-        if not isinstance(new_edge, tuple):
-            raise ValueError(f"Expected new_edge to be a tuple, got {type(new_edge)} instead.")
-
-        shared_cameras = set(reference_edge).intersection(new_edge)
-        assert len(shared_cameras) == 1, f"Expected one shared camera between {reference_edge} and {new_edge}."
-        shared_camera = shared_cameras.pop()
-
-        index = reference_edge.index(shared_camera)
-        edge_loc = "successor" if shared_camera == new_edge[0] else "predecessor"
-
-        return edge_loc, index
-
-    def __get_camera_span_from_edge(
+    def __get_src_dst_pts(
         self,
-        new_edge: tuple[int, int],
-        is_initial_edge: bool,
-        reference_edge: tuple[int, int] = None,
-    ) -> QueryTrainTracks | None:
-        """
-        Get corresponding source and destination points that span all cameras in reference_edge and new_edge.
+        camera_0: int,
+        camera_1: int,
+        queryIdx: np.ndarray,
+        trainIdx: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        image_0 = self.image_data[camera_0]
+        image_1 = self.image_data[camera_1]
 
-        Parameters
-        ----------
-        new_edge : tuple[int, int]
-            _description_
-        is_initial_edge : bool
-            _description_
-        reference_edge : tuple[int, int], optional
-            _description_, by default None
-
-        Returns
-        -------
-        QueryTrainTracks | None
-            _description_
-        """
-        query_train_tracks = get_query_and_train(
-            new_edge=new_edge,
-            tracks=self.tracks,
-            camera2trackIDs=self.camera2trackIDs,
-            is_initial_edge=is_initial_edge,
-            reference_edge=reference_edge,
-        )
-        if query_train_tracks.queryIdx_tracks.size == 0:
-            self.G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
-            logger.info(f"Not enough query/train points for {new_edge}.")
-            return None
-
-        return query_train_tracks
+        src_pts = image_0.keypoints_np[queryIdx]
+        dst_pts = image_1.keypoints_np[trainIdx]
+        assert len(src_pts) == len(dst_pts), "Length of queryIdx and trainIdx need to match!"
+        return src_pts, dst_pts
 
     def __get_cam_pose_from_reference(
         self,
@@ -216,8 +93,8 @@ class SFMPipeline:
         tuple[np.ndarray | None, np.ndarray | None]
             Rotation and translation of new camera
         """
-        src_pts_tracks, dst_pts_tracks = get_src_dst_pts(
-            *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, self.image_data
+        src_pts_tracks, dst_pts_tracks = self.__get_src_dst_pts(
+            *new_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks
         )
 
         if is_initial_edge:
@@ -277,7 +154,7 @@ class SFMPipeline:
         """
         # Get corresponding source and destination points between cameras in new_edge
         queryIdx_full, trainIdx_full = self.G_covisibility.edges[new_edge]["query_train"]
-        src_pts, dst_pts = get_src_dst_pts(*new_edge, queryIdx_full, trainIdx_full, self.image_data)
+        src_pts, dst_pts = self.__get_src_dst_pts(*new_edge, queryIdx_full, trainIdx_full)
 
         # Triangulate to get 3D points
         if is_initial_edge:
@@ -304,36 +181,11 @@ class SFMPipeline:
         logger.info(f"Edge: {new_edge} has {sum(inliers)} inliers.")
         return queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera
 
-    def __update_tracks(
-        self,
-        new_edge: tuple[int, int],
-        stereo_camera: StereoCamera,
-        queryIdx_full: np.ndarray,
-        pts_3D_out: np.ndarray,
-        inliers: np.ndarray,
-        src_pts: np.ndarray,
-        dst_pts: np.ndarray,
-        processed: bool = False,
-    ):
-
-        attrs = dict(num_pts_3D=sum(inliers), stereo_camera=stereo_camera)
-        if processed:
-            attrs["processed"] = processed
-        self.G_covisibility.add_edges_from([new_edge], **attrs)
-
-        assert len(queryIdx_full) == len(pts_3D_out) == len(inliers) == len(src_pts) == len(dst_pts)
-        for query, pt_3D, inlier, src, dst in zip(queryIdx_full, pts_3D_out, inliers, src_pts, dst_pts):
-            trackIDs_from_cam_and_query = self.node2trackID[(new_edge[0], query)]
-            for track_id in trackIDs_from_cam_and_query:
-                track_obj = self.tracks[track_id]
-                if new_edge[1] in track_obj.cameras:
-                    track_obj.update_triangulated(*new_edge, pt_3D, inlier, src, dst)
-
     def run(self, init_edge: tuple[int, int]):
 
-        query_train_tracks = self.__get_camera_span_from_edge(init_edge, True, None)
-        src_pts, dst_pts = get_src_dst_pts(
-            *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks, self.image_data
+        query_train_tracks = super().get_camera_span_from_edge(init_edge, True, None)
+        src_pts, dst_pts = self.__get_src_dst_pts(
+            *init_edge, query_train_tracks.queryIdx_tracks, query_train_tracks.trainIdx_tracks
         )
 
         # Get pose of initial 2 cameras and triangulate to get 3D points
@@ -352,23 +204,18 @@ class SFMPipeline:
                 query_train_tracks.trainIdx_tracks,
                 inliers,
             )
-        self.__update_tracks(
-            init_edge,
-            stereo_camera,
-            query_train_tracks.queryIdx_tracks,
-            pts_3D_out,
-            inliers,
-            src_pts,
-            dst_pts,
-            processed=True,
-        )
 
-        for ref_num_pts, ref_weight, reference_edge, new_edge in get_next_edge(self.G_covisibility, init_edge):
+        # Update tracks with init_edge
+        attrs = dict(num_pts_3D=sum(inliers), stereo_camera=stereo_camera, processed=True)
+        self.G_covisibility.add_edges_from([init_edge], **attrs)
+        self.tracks.update_tracks(init_edge, query_train_tracks.queryIdx_tracks, pts_3D_out, inliers, src_pts, dst_pts)
+
+        for ref_num_pts, ref_weight, reference_edge, new_edge in super().get_next_edge(init_edge):
             logger.info(f"Evaluating edge: {new_edge} with reference: {reference_edge}")
-            edge_loc, index = self.__get_edge_relation(reference_edge, new_edge)
+            edge_loc, index = get_edge_relation(reference_edge, new_edge)
             logger.info(f"Details - num_pts: {-ref_num_pts} and weight: {-ref_weight}")
 
-            query_train_tracks = self.__get_camera_span_from_edge(new_edge, False, reference_edge)
+            query_train_tracks = super().get_camera_span_from_edge(new_edge, False, reference_edge)
             if query_train_tracks is None:
                 continue
 
@@ -379,7 +226,11 @@ class SFMPipeline:
             queryIdx_full, trainIdx_full, inliers, pts_3D_out, src_pts, dst_pts, stereo_camera = (
                 self.__triangulate_from_reference(new_edge, False, R_out, t_out, reference_edge, edge_loc, index)
             )
-            self.__update_tracks(new_edge, stereo_camera, queryIdx_full, pts_3D_out, inliers, src_pts, dst_pts)
+
+            # Update tracks with new_edge
+            attrs = dict(num_pts_3D=sum(inliers), stereo_camera=stereo_camera)
+            self.G_covisibility.add_edges_from([new_edge], **attrs)
+            self.tracks.update_tracks(new_edge, queryIdx_full, pts_3D_out, inliers, src_pts, dst_pts)
 
             if self.plot_images:
                 plot_matches(
