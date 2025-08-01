@@ -19,6 +19,7 @@ def plot_matches(
     trainIdx: np.ndarray,
     inliers: np.ndarray,
 ) -> None:
+    os.makedirs(os.path.join(__cwd__, "debug"), exist_ok=True)
 
     edge = "-".join([image_i.filename, image_j.filename])
 
