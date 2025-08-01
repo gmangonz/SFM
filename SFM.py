@@ -257,6 +257,7 @@ class SFMPipeline(CovisibilityGraph):
             inliers, pts_3D, src_pts, dst_pts, stereo_camera = self.__triangulate_from_reference(
                 new_edge, queryIdx, trainIdx, R_out, t_out, reference_edge, edge_loc, share_idx_from_ref
             )
+            # TODO: Add as input argument
             if sum(inliers) <= 10:
                 logger.info(f"Not enough inliers left over for {new_edge}.")
                 self.G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
@@ -375,4 +376,5 @@ if __name__ == "__main__":
     __cwd__ = os.path.dirname(__file__)
 
     sfm = SFMPipeline(os.path.join(__cwd__, "images"), plot_images=False, track_extraction_method="dijkstra")
-    sfm.run(init_edge=(7, 8), direct_update=(direct_update := True))
+    # TODO: Work on running multiple initializations
+    sfm.run(init_edge=(7, 8), direct_update=(direct_update := True))  # TODO: Add as input argument
