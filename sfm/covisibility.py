@@ -180,8 +180,6 @@ class Tracks(list[Track]):
         super().__init__()
         # Mapping from camera_id to all tracks (via indices) that contain camera_id
         self.camera2trackIDs: dict[int, list[int]] = defaultdict(list)
-        # Mapping of (camera_id, feature_id) to the track ID
-        self.node2trackIDs: dict[tuple[int, int], list[int]] = defaultdict(list)  # TODO: Not sure I like node2trackID
 
     def __get_common_track_IDs(
         self,
@@ -241,9 +239,6 @@ class Tracks(list[Track]):
             # Add to camera2trackIDs
             for cam in cameras_in_track:
                 self.camera2trackIDs[cam].append(track_ID)
-            # Add to node2trackIDs
-            for cam_featureIdx in track:
-                self.node2trackIDs[cam_featureIdx].append(track_ID)
 
     def get_query_and_train(
         self,
