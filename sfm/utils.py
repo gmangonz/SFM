@@ -5,9 +5,6 @@ from pathlib import Path
 
 import cv2
 import gtsam
-import gtsam.utils.plot
-import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import open3d as o3d
 import torch
@@ -42,6 +39,11 @@ class SingleCamera:
         self.R = R if R is not None else np.eye(3)
         self.t = t if t is not None else np.zeros(3)
         self.P = self.K @ np.concatenate((self.R, self.t.reshape(3, 1)), axis=1)
+
+        T = np.eye(4)
+        T[:3, :3] = self.R
+        T[:3, -1] = self.t.flatten()
+        self.pose = T
 
     def undistort_points(self, uv: np.ndarray) -> np.ndarray:
         uv_undistort = cv2.undistortImagePoints(
@@ -186,23 +188,6 @@ def SIFT(
     return clahe_img, np.asarray(kpts), np.asarray(descriptors)
 
 
-def get_src_dst_pts(
-    camera_0: int,
-    camera_1: int,
-    queryIdx: np.ndarray,
-    trainIdx: np.ndarray,
-    image_data: list[ImageData],
-) -> tuple[np.ndarray, np.ndarray]:
-
-    image_0 = image_data[camera_0]
-    image_1 = image_data[camera_1]
-
-    src_pts = image_0.keypoints_np[queryIdx]
-    dst_pts = image_1.keypoints_np[trainIdx]
-    assert len(src_pts) == len(dst_pts), "Length of queryIdx and trainIdx need to match!"
-    return src_pts, dst_pts
-
-
 def to_cv2KeyPoint(data: KeyPoint) -> cv2.KeyPoint:
     return cv2.KeyPoint(
         data.pt[0],
@@ -345,6 +330,12 @@ def get_pose(
     Given ALL the matches between the 2 images, cv2.findEssentialMat will
     filter the matches that optimize the essential matrix. Then, cv2.recoverPose
     will further filter the matches to those that are infront of the camera.
+
+    The rotation is given from camera_0 to camera_1 if src_pts are found on camera_0
+    and dst_pts are found on camera_1. R_{cam1, cam0}
+
+    The returned translation vector is also from camera_0 to camera_1 but in the
+    coordinate frame of camera_0. t_{cam1, cam0}
 
     Parameters
     ----------

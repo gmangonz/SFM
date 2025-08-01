@@ -49,7 +49,12 @@ class TrackEdge:
 
 
 class Track:
-    """In theory, represents a single (3D) point that propagates from an initial image to subsequent images."""
+    """
+    In theory, represents a single (3D) point that propagates from an initial image to subsequent images.
+
+    Track represented by [[cam_0, featureIdx], [cam_1, featureIdx], ..., [cam_N, featureIdx]]
+    for a single point that propagates through various cameras with different featureIdx's that are matched.
+    """
 
     def __init__(self, track_id: int, track: list[tuple[int, int]] | np.ndarray, valid_pts: int = 0):
         """
@@ -61,7 +66,7 @@ class Track:
             Unique ID for the track.
         track : list[tuple[int, int]] | np.ndarray
             Track represented by [[cam_0, featureIdx], [cam_1, featureIdx], ..., [cam_N, featureIdx]]
-            for a single point that propagates through various camera with different featureIdx's that are matched.
+            for a single point that propagates through various cameras with different featureIdx's that are matched.
         valid_pts : int, optional
             Number of valid points, by default 0.
         """
@@ -77,8 +82,19 @@ class Track:
         self.cam2featureIdx = dict(self.track)
         # Get the cameras in order seen in the track
         self.cameras = np.asarray(self.track)[:, 0]
-        # Initialize mapping from edge to triangulated boolean, 3D point, inlier status, and respective 2D points
-        self._edges: dict[tuple[int, int], TrackEdge] = {}
+        # Initialize mapping from edge ((cam_i, cam_j) ) to triangulated
+        # boolean, 3D point, inlier status, and respective 2D points
+        self._triangulated_edges: dict[tuple[int, int], TrackEdge] = defaultdict(
+            lambda: TrackEdge(
+                None, None, np.array([-1.0, -1.0, -1.0]), False, np.array([-1.0, -1.0]), np.array([-1.0, -1.0])
+            )
+        )
+        # NOTE: Why do we need a default dict?
+        # When updating the GTSAM graph, all the tracks that contain `new_cam_0` and `new_cam_1` are passed.
+        # This includes tracks that may link like so: ... --> new_cam_0 --> new_cam_n --> new_cam_1 ... -->.
+        # However, when updating the tracks, if `direct_update=True`, then only the tracks that have direct
+        # links are updated, or tracks that only link like so: ... --> new_cam_0 --> new_cam_1 ... -->. This
+        # means that some tracks will not contain (new_edge) when passed through the GTSAM update_graph(...)
 
     def update_triangulated(
         self,
@@ -92,10 +108,10 @@ class Track:
         _edge = (camera_0, camera_1)
         assert self.cam2featureIdx.get(camera_0, None) is not None, f"{camera_0} is not a valid camera in {self.track}."
         assert self.cam2featureIdx.get(camera_1, None) is not None, f"{camera_1} is not a valid camera in {self.track}."
-        if is_inlier and not _edge in self._edges:
+        if is_inlier and not _edge in self._triangulated_edges:
             self.valid_pts += 1
 
-        self._edges[_edge] = TrackEdge(
+        self._triangulated_edges[_edge] = TrackEdge(
             camera_0=camera_0,
             camera_1=camera_1,
             pt_3D=pt_3D,
@@ -105,10 +121,10 @@ class Track:
         )
 
     def get_pt_3D(self, edge: tuple[int, int] = None) -> np.ndarray:
-        return np.array([-1.0, -1.0, -1.0]) if edge is None else self._edges.get(edge, __default_3D__).pt_3D
+        return np.array([-1, -1, -1.0]) if edge is None else self._triangulated_edges.get(edge, __default_3D__).pt_3D
 
     def is_inlier(self, edge: tuple[int, int] = None) -> bool:
-        return False if edge is None else self._edges.get(edge, __default_in__).is_inlier
+        return False if edge is None else self._triangulated_edges.get(edge, __default_in__).is_inlier
 
     def is_valid_track(self, n: int = 3) -> bool:
         return self.valid_pts >= n
@@ -122,12 +138,15 @@ class Track:
         list[tuple[int, int]]
             Returns the edges [(cam_0, cam_1), ...]
         """
-        return list(self._edges.keys())
+        return list(self._triangulated_edges.keys())
 
     def get_edge(self, edge: tuple[int, int]) -> tuple[tuple[np.ndarray, np.ndarray], np.ndarray, bool]:
         """
         Retrieve stored data for the respective edge. Since this happens at post-processing, `edge`
-        should be a valid key in self._edges.
+        should be a valid key in self._triangulated_edges.
+
+        "edge" in this context refers to the source-and-latest camera pairing. This function is
+        primarily used to update/create GTSAM graph.
 
         Parameters
         ----------
@@ -139,10 +158,20 @@ class Track:
         tuple[tuple[np.ndarray, np.ndarray], np.ndarray, bool]
             Edge data such as source and destination points, 3D points, and inlier booleans
         """
-        return self._edges[edge].get_edge_info()
+        if edge[0] not in self.cameras:
+            raise AssertionError(f"Camera {edge[0]} is not a valid camera in {self.cameras}")
+        if edge[1] not in self.cameras:
+            raise AssertionError(f"Camera {edge[1]} is not a valid camera in {self.cameras}")
+
+        logger.debug(f"Cameras seen: {self.cameras}")
+        logger.debug(f"Triangulated edges: {list(self._triangulated_edges.keys())}, on track: {self}")
+        return self._triangulated_edges[edge].get_edge_info()
 
     def __len__(self) -> int:
         return len(self.track)
+
+    def __repr__(self) -> str:
+        return f"{self.track}"
 
 
 class Tracks(list[Track]):
@@ -152,7 +181,7 @@ class Tracks(list[Track]):
         # Mapping from camera_id to all tracks (via indices) that contain camera_id
         self.camera2trackIDs: dict[int, list[int]] = defaultdict(list)
         # Mapping of (camera_id, feature_id) to the track ID
-        self.node2trackID: dict[tuple[int, int], list[int]] = defaultdict(list)  # TODO: Not sure I like node2trackID
+        self.node2trackIDs: dict[tuple[int, int], list[int]] = defaultdict(list)  # TODO: Not sure I like node2trackID
 
     def __get_common_track_IDs(
         self,
@@ -176,7 +205,7 @@ class Tracks(list[Track]):
             Common track IDs.
         """
         cameras = [*reference_edge, *new_edge] if reference_edge else [*new_edge]
-        track_IDs = [self.camera2trackIDs[cam] for cam in cameras]
+        track_IDs = [self.camera2trackIDs[cam] for cam in set(cameras)]
 
         common_track_IDs = set(track_IDs[0])
         for lst in track_IDs[1:]:
@@ -198,8 +227,6 @@ class Tracks(list[Track]):
         camera_id, _ = base_node
 
         for track in components:
-            if len(track) < 3:
-                continue
             # Sort the track by camera_id if not already sorted and a set
             if isinstance(track, set):
                 track = natsort.natsorted(list(track), key=lambda x: x[0])
@@ -214,14 +241,13 @@ class Tracks(list[Track]):
             # Add to camera2trackIDs
             for cam in cameras_in_track:
                 self.camera2trackIDs[cam].append(track_ID)
-            # Add to node2trackID
+            # Add to node2trackIDs
             for cam_featureIdx in track:
-                self.node2trackID[cam_featureIdx].append(track_ID)
+                self.node2trackIDs[cam_featureIdx].append(track_ID)
 
     def get_query_and_train(
         self,
         new_edge: tuple[int, int],
-        is_initial_edge: bool = True,
         reference_edge: tuple[int, int] = None,
     ) -> QueryTrainTracks:
         """
@@ -230,6 +256,10 @@ class Tracks(list[Track]):
 
         For these tracks, will retrieve the queryIdx, trainIdx, the 3D reference point
         and the reference inlier boolean.
+
+        If new_edge is represented as (cam_i, cam_j) and reference edge is (cam_m, cam_j),
+        then queryIdx and trainIdx are for cam_i and cam_j, respectively. And the 3D reference
+        point and inlier flag is for reference edge.
 
         Parameters
         ----------
@@ -248,9 +278,6 @@ class Tracks(list[Track]):
             Query indices, train indices, 3D points, valid 3D points, and track objects.
             If is_initial_edge is False, then queryIdx and trainIdx will span all the edges passed.
         """
-        if not is_initial_edge and not reference_edge:
-            raise ValueError("reference_edge must be passed if is_initial_edge is False.")
-
         # Get tracks that pass through the corresponding cameras
         common_track_IDs = self.__get_common_track_IDs(new_edge, reference_edge)
 
@@ -280,35 +307,44 @@ class Tracks(list[Track]):
 
     def update_tracks(
         self,
+        tracks_to_update: QueryTrainTracks,
         new_edge: tuple[int, int],
-        queryIdx: np.ndarray,
         pts_3D: np.ndarray,
         inliers: np.ndarray,
         src_pts: np.ndarray,
         dst_pts: np.ndarray,
+        queryIdx_direct: np.ndarray | None,
+        trainIdx_direct: np.ndarray | None,
+        direct_update: bool = False,
     ):
-        assert len(queryIdx) == len(pts_3D) == len(inliers) == len(src_pts) == len(dst_pts)
-        for query, pt_3D, inlier, src, dst in zip(queryIdx, pts_3D, inliers, src_pts, dst_pts):
-            trackIDs_from_cam_and_query = self.node2trackID[(new_edge[0], query)]
-            for track_id in trackIDs_from_cam_and_query:
-                track_obj = self[track_id]
-                if new_edge[1] in track_obj.cameras:
-                    track_obj.update_triangulated(*new_edge, pt_3D, inlier, src, dst)
 
-        # common_track_IDs = get_common_track_IDs(new_edge, camera2trackIDs)
-        # queryIdx2point3d = dict(zip(queryIdx_full, pts_3D_out))
-        # queryIdx2inliers = dict(zip(queryIdx_full, inliers))
-        # _cam = new_edge[0]
-        # for track_id in common_track_IDs:
-        #     track_obj = tracks[track_id]
-        #     _queryIdx = track_obj.cam2featureIdx[_cam]
+        query = tracks_to_update.queryIdx_tracks
+        train = tracks_to_update.trainIdx_tracks
+        if direct_update:
+            query = queryIdx_direct
+            train = trainIdx_direct
 
-        #     _pt_3D = queryIdx2point3d.get(_queryIdx, None)
-        #     _inlier = queryIdx2inliers.get(_queryIdx, None)
-        #     if _pt_3D is None:
-        #         continue
-        #     track_obj.update_triangulated(*new_edge, _pt_3D, _inlier)
-        # print(f"Updated: {_num} tracks out of {len(common_track_IDs)} common tracks and {len(queryIdx_full)} queries.")
+        assert len(pts_3D) == len(inliers) == len(src_pts) == len(dst_pts) == len(query) == len(train)
+
+        # Update track objects with triangulated info
+        query2pts3D = dict(zip(query, pts_3D))
+        query2srcpt = dict(zip(query, src_pts))
+        query2valid = dict(zip(query, inliers))
+        train2dstpt = dict(zip(train, dst_pts))
+        for track_obj, queryIdx, trainIdx in zip(
+            tracks_to_update.track_objs, tracks_to_update.queryIdx_tracks, tracks_to_update.trainIdx_tracks
+        ):
+            if direct_update and query2pts3D.get(queryIdx, None) is None:
+                continue
+            if direct_update and train2dstpt.get(trainIdx, None) is None:
+                continue
+            track_obj.update_triangulated(
+                *new_edge,
+                query2pts3D[queryIdx],
+                query2valid[queryIdx],
+                query2srcpt[queryIdx],
+                train2dstpt[trainIdx],
+            )
 
 
 class CovisibilityGraph:
@@ -418,17 +454,26 @@ class CovisibilityGraph:
     def get_camera_span_from_edge(
         self,
         new_edge: tuple[int, int],
-        is_initial_edge: bool,
         reference_edge: tuple[int, int] = None,
     ) -> QueryTrainTracks | None:
         """
-        Get corresponding source and destination points that span all cameras in reference_edge and new_edge.
+        Get corresponding tracks that span all cameras in reference_edge and new_edge. These
+        tracks represent the union of source and destination points from all cameras seen between
+        reference_edge and new_edge.
+
+        For these tracks, will retrieve the queryIdx, trainIdx, the 3D reference point
+        and the reference inlier boolean.
+
+        It is possible that the cameras that span the track are not direct. For example, the track
+        could connect from `cam_i ---> cam_j ---> cam_m ---> cameras_in_between ---> cam_n`.
+
+        If new_edge is represented as (cam_i, cam_j) and reference edge is (cam_m, cam_n),
+        then queryIdx and trainIdx are for cam_i and cam_j, respectively. And the 3D reference
+        point and inlier flag is for reference edge.
 
         Parameters
         ----------
         new_edge : tuple[int, int]
-            _description_
-        is_initial_edge : bool
             _description_
         reference_edge : tuple[int, int], optional
             _description_, by default None
@@ -438,17 +483,13 @@ class CovisibilityGraph:
         QueryTrainTracks | None
             _description_
         """
-        query_train_tracks = self.tracks.get_query_and_train(
-            new_edge=new_edge,
-            is_initial_edge=is_initial_edge,
-            reference_edge=reference_edge,
-        )
-        if query_train_tracks.queryIdx_tracks.size == 0:
+        ref2new_tracks = self.tracks.get_query_and_train(new_edge=new_edge, reference_edge=reference_edge)
+        if ref2new_tracks.queryIdx_tracks.size == 0:
             self.G_covisibility.add_edges_from([new_edge], num_pts_3D=-1)
             logger.info(f"Not enough query/train points for {new_edge}.")
             return None
 
-        return query_train_tracks
+        return ref2new_tracks
 
     def get_next_edge(self, init_edge: tuple[int, int]):
         """
