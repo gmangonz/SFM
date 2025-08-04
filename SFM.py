@@ -101,9 +101,9 @@ class SFMPipeline(CovisibilityGraph):
         new_edge : tuple[int, int]
             Camera pair: (cam_i, cam_j)
         ref2new_tracks : QueryTrainTracks
-            _description_
+            Dataclass with info on tracks that contain the set of cameras in (*new_edge, *reference_edge).
         edge_loc : str
-            _description_
+            "successor" if unseen camera in new_edge succeds from their shared camera, else "predecessor".
 
         Returns
         -------
@@ -155,21 +155,21 @@ class SFMPipeline(CovisibilityGraph):
         Parameters
         ----------
         new_edge : tuple[int, int]
-            _description_
+            New camera pair: (cam_i, cam_j), to evaluate.
         queryIdx : np.ndarray
-            _description_
+            Indices of the feature points for the image corresponding to camera=new_edge[0].
         trainIdx : np.ndarray
-            _description_
+            Indices of the feature points for the image corresponding to camera=new_edge[1].
         R_out : np.ndarray
-            _description_
+            Rotation of the newly unseen camera within new_edge.
         t_out : np.ndarray
-            _description_
+            Translation of the newly unseen camera within new_edge.
         reference_edge : tuple[int, int] | None
-            _description_
+            Reference edge for new_edge from covisibility graph.
         edge_loc : str | None
-            _description_
+            "successor" if unseen camera in new_edge succeds from their shared camera, else "predecessor".
         share_idx_from_ref : int | None
-            _description_
+            Index the shared camera between new_edge and reference_edge exists in reference_edge.
 
         Returns
         -------

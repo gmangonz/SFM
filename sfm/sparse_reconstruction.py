@@ -37,6 +37,16 @@ class SceneGraph:
         self.initialized = False
 
     def add_initial_cam_pose_estimate(self, global_pose: np.ndarray, idx: int):
+        """
+        Add initial estimate of the pose for the given camera index.
+
+        Parameters
+        ----------
+        global_pose : np.ndarray
+            Initial pose estimate as a 4x4 matrix.
+        idx : int
+            Camera index.
+        """
 
         global_pose = np.linalg.inv(global_pose)
         global_pose = gtsam.Pose3(gtsam.Rot3(global_pose[:3, :3]), gtsam.Point3(global_pose[:3, -1].flatten()))
@@ -44,11 +54,34 @@ class SceneGraph:
             self.initial_estimate.insert(Camera(idx), global_pose)
 
     def add_initial_pt_3D_landmark_estimate(self, id: int, pt_3D: np.ndarray):
+        """
+        Add initial estimate of the 3D position for the given landmark.
+
+        Parameters
+        ----------
+        id : int
+            Landmark ID.
+        pt_3D : np.ndarray
+            Initial estimate of the 3D location.
+        """
 
         if not self.initial_estimate.exists(Landmark(id)):
             self.initial_estimate.insert(Landmark(id), gtsam.Point3(*pt_3D))
 
     def add_projection_factors(self, pt: np.ndarray, cam_idx: int, landmark_idx: int):
+        """
+        Add projection factor to the graph. Provides information of the 2D location of the
+        specified landmark on the specified camera.
+
+        Parameters
+        ----------
+        pt : np.ndarray
+            2D location (or projection) of the landmark on the camera.
+        cam_idx : int
+            Camera index.
+        landmark_idx : int
+            Landmark ID.
+        """
 
         factor = gtsam.GenericProjectionFactorCal3_S2(
             gtsam.Point2(*pt),
@@ -61,14 +94,15 @@ class SceneGraph:
 
     def add_prior_point_factor(self, landmark_idx: int, pt_3d: np.ndarray):
         """
-        Add PriorFactorPoint3 factor to the graph
+        Add PriorFactorPoint3 factor to the graph. Provide a soft constraint on the
+        absolute 3D position (Point3) of the specified Landmark.
 
         Parameters
         ----------
         key : int
-            _description_
+            Landmark ID.
         pt_3d : np.ndarray
-            _description_
+            3D location.
         """
         self.graph.add(
             gtsam.PriorFactorPoint3(
@@ -79,6 +113,19 @@ class SceneGraph:
         )
 
     def add_between_poses(self, idx_1: int, idx_2: int, relative_pose: np.ndarray):
+        """
+        Adds a BetweenFactorPose3 to the graph to add a soft contraint on the relative pose between
+        2 cameras.
+
+        Parameters
+        ----------
+        idx_1 : int
+            Camera index 1.
+        idx_2 : int
+            Camera index 2.
+        relative_pose : np.ndarray
+            Relative pose between the 2 cameras.
+        """
 
         relative_pose = gtsam.Pose3(gtsam.Rot3(relative_pose[:3, :3]), gtsam.Point3(relative_pose[:3, -1].flatten()))
         factor = gtsam.BetweenFactorPose3(Camera(idx_1), Camera(idx_2), relative_pose, self.pose_noise)
@@ -92,6 +139,23 @@ class SceneGraph:
         query_train_tracks: QueryTrainTracks,
         n: int,
     ):
+        """
+        Update the graph given the results of pose estimation using PnP, triangulation, and feature matchings.
+
+        Parameters
+        ----------
+        G_covisibility : nx.Graph
+            Covisibility graph containing the poses for each camera.
+        reference_edge : tuple[int, int]
+            Reference edge for new_edge from covisibility graph.
+        new_edge : tuple[int, int]
+            New camera pair: (cam_i, cam_j), to evaluate.
+        query_train_tracks : QueryTrainTracks
+            Dataclass with info on tracks that contain the set of cameras in (*new_edge, *reference_edge).
+        n : int
+            Minimum number of valid points needed for a track (Landmark) to be considered a valid track to update.
+        """
+
         ref_edge_data = G_covisibility.edges[reference_edge]
         new_edge_data = G_covisibility.edges[new_edge]
 
@@ -116,6 +180,15 @@ class SceneGraph:
                     self.add_prior_point_factor(track_obj.track_id, pt_3D)
 
     def solve(self):
+        """
+        Run Levenberg Marquard optimization to solve the constructed graph given the contraints, relations, and noise
+        estimates.
+
+        Returns
+        -------
+        tuple
+            Results, marginals, and the errors after optimization
+        """
 
         visualize_graph(self.initial_estimate, defaultdict(lambda: [255, 255, 255]), title="SFM Initial Estimates")
         params = gtsam.LevenbergMarquardtParams()

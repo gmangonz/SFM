@@ -469,9 +469,9 @@ class CovisibilityGraph:
         Parameters
         ----------
         new_edge : tuple[int, int]
-            _description_
+            New set of cameras to evaluate from covisibility graph.
         reference_edge : tuple[int, int], optional
-            _description_, by default None
+            Reference edge for new_edge from covisibility graph as (ref_cam_0, ref_cam_1), by default None.
 
         Returns
         -------
@@ -493,7 +493,7 @@ class CovisibilityGraph:
         Parameters
         ----------
         init_edge : tuple[int, int]
-            Initial edge
+            Initial edge, or set of cameras from covisibility graph.
 
         Returns
         -------

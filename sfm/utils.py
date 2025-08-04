@@ -267,45 +267,6 @@ def fundamental_ransac(
     return F, err < threshold
 
 
-def get_optimal_E(
-    E: np.ndarray,
-    src_pts: np.ndarray,
-    dst_pts: np.ndarray,
-    K: np.ndarray,
-    mask: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-
-    _, R_out, t_out, mask = cv2.recoverPose(E, src_pts, dst_pts, K, mask=mask)
-    inliers = sum(mask)
-    return R_out, t_out, mask, inliers
-
-
-def find_optimal_E(
-    E: np.ndarray,
-    src_pts: np.ndarray,
-    dst_pts: np.ndarray,
-    K: np.ndarray,
-    mask: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-
-    most_inliers = 0
-    R_out, t_out, mask_out = None, None, None
-    for e in range(0, E.shape[0], 3):
-
-        R_, t_, mask_, inliers = get_optimal_E(
-            E=E[e : e + 3, :].copy(),
-            src_pts=src_pts.copy(),
-            dst_pts=dst_pts.copy(),
-            K=K,
-            mask=mask.copy(),
-        )
-        if inliers > most_inliers:
-            most_inliers = inliers
-            R_out, t_out, mask_out = R_, t_, mask_
-
-    return R_out, t_out, mask_out
-
-
 def compute_essential_matrix(src_pts: np.ndarray, dst_pts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     E, mask_out = cv2.findEssentialMat(
@@ -350,9 +311,6 @@ def get_pose(
         Essential matrix, mask, inliers, rotation, and translation.
     """
     E, mask_out, inliers = compute_essential_matrix(src_pts, dst_pts)
-    # if E.shape[0] > 3 and E.shape[0] % 3 == 0:
-    #     R_out, t_out, mask_out = find_optimal_E(E, src_pts, dst_pts, K, mask)
-    # else:
     _, R_out, t_out, _ = cv2.recoverPose(E, src_pts, dst_pts, K)  # , mask=mask_out)
     return E, mask_out, inliers, R_out, t_out
 
@@ -450,21 +408,21 @@ def get_edge_relation(reference_edge: tuple[int, int], new_edge: tuple[int, int]
     Parameters
     ----------
     reference_edge : tuple[int, int]
-        _description_
+        Reference edge for new_edge from covisibility graph as (ref_cam_0, ref_cam_1).
     new_edge : tuple[int, int]
-        _description_
+        New set of cameras to evaluate.
 
     Returns
     -------
     tuple[str, int]
-        _description_
+        Relation of new_edge w.r.t. reference_edge
 
     Raises
     ------
     ValueError
-        _description_
-    ValueError
-        _description_
+        If reference or new_edge is not a tuple
+    AssertionError
+        If only one camera is not shared between reference_edge and new_edge
     """
 
     if not isinstance(reference_edge, tuple):
@@ -479,10 +437,6 @@ def get_edge_relation(reference_edge: tuple[int, int], new_edge: tuple[int, int]
     index = reference_edge.index(shared_camera)
     edge_loc = "successor" if shared_camera == new_edge[0] else "predecessor"
     return edge_loc, index
-
-
-def pose_to_matrix(pose):
-    return np.asanyarray(pose.matrix())
 
 
 def save_pcd(landmarks: np.ndarray, display_colors: np.ndarray, title: str = "pcd"):
