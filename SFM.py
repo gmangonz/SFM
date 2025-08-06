@@ -272,7 +272,9 @@ class SFMPipeline(CovisibilityGraph):
             if self.plot_images:
                 plot_matches(self.image_data[new_edge[0]], self.image_data[new_edge[1]], queryIdx, trainIdx, inliers)
 
-            self.scene_graph.update_graph(self.G_covisibility, reference_edge, new_edge, tracks_current, inliers_needed)
+            self.scene_graph.update_graph(
+                self.G_covisibility, reference_edge, new_edge, tracks_current, inliers_needed, sum(inliers)
+            )
         self.scene_graph.solve()
 
 
@@ -387,6 +389,6 @@ if __name__ == "__main__":
 
     __cwd__ = os.path.dirname(__file__)
 
-    sfm = SFMPipeline(os.path.join(__cwd__, "images"), plot_images=False, track_extraction_method="dijkstra")
+    sfm = SFMPipeline(os.path.join(__cwd__, "images"), plot_images=False, track_extraction_method=args.method)
     # TODO: Work on running multiple initializations
     sfm.run(init_edge=(7, 8), direct_update=(direct_update := args.no_direct_update), min_inliers=args.min_inliers)

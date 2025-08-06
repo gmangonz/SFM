@@ -40,7 +40,10 @@ class SceneGraph:
 
         self.initialized = False
 
-    def add_initial_cam_pose_estimate(self, global_pose: np.ndarray, idx: int):
+        self.__landmark_id_2_inliers = {}
+        self.__camera_idx_2_inliers = {}
+
+    def add_initial_cam_pose_estimate(self, global_pose: np.ndarray, idx: int, num_inliers: int):
         """
         Add initial estimate of the pose for the given camera index.
 
@@ -51,13 +54,20 @@ class SceneGraph:
         idx : int
             Camera index.
         """
-
+        cam_id = Camera(idx)
         global_pose = np.linalg.inv(global_pose)  # NOTE: I believe this is to convert to gtsam reference
         global_pose = gtsam.Pose3(gtsam.Rot3(global_pose[:3, :3]), gtsam.Point3(global_pose[:3, -1].flatten()))
-        if not self.initial_estimate.exists(Camera(idx)):
-            self.initial_estimate.insert(Camera(idx), global_pose)
+        if not self.initial_estimate.exists(cam_id):
+            self.initial_estimate.insert(cam_id, global_pose)
+            self.__camera_idx_2_inliers[cam_id] = num_inliers
 
-    def add_initial_pt_3D_landmark_estimate(self, id: int, pt_3D: np.ndarray):
+        if self.initial_estimate.exists(cam_id) and num_inliers > self.__camera_idx_2_inliers[cam_id]:
+            # remove and insert new estimate
+            self.initial_estimate.erase(cam_id)
+            self.initial_estimate.insert(cam_id, global_pose)
+            self.__camera_idx_2_inliers[cam_id] = num_inliers
+
+    def add_initial_pt_3D_landmark_estimate(self, id: int, pt_3D: np.ndarray, num_inliers: int):
         """
         Add initial estimate of the 3D position for the given landmark.
 
@@ -68,9 +78,16 @@ class SceneGraph:
         pt_3D : np.ndarray
             Initial estimate of the 3D location.
         """
+        landmark_id = Landmark(id)
+        if not self.initial_estimate.exists(landmark_id):
+            self.initial_estimate.insert(landmark_id, gtsam.Point3(*pt_3D))
+            self.__landmark_id_2_inliers[landmark_id] = num_inliers
 
-        if not self.initial_estimate.exists(Landmark(id)):
-            self.initial_estimate.insert(Landmark(id), gtsam.Point3(*pt_3D))
+        if self.initial_estimate.exists(landmark_id) and num_inliers > self.__landmark_id_2_inliers[landmark_id]:
+            # remove and insert new estimate
+            self.initial_estimate.erase(landmark_id)
+            self.initial_estimate.insert(landmark_id, gtsam.Point3(*pt_3D))
+            self.__landmark_id_2_inliers[landmark_id] = num_inliers
 
     def add_projection_factors(self, pt: np.ndarray, cam_idx: int, landmark_idx: int):
         """
@@ -147,6 +164,7 @@ class SceneGraph:
         new_edge: tuple[int, int],
         query_train_tracks: QueryTrainTracks,
         n: int,
+        num_inliers: int,
     ):
         """
         Update the graph given the results of pose estimation using PnP, triangulation, and feature matchings.
@@ -171,8 +189,8 @@ class SceneGraph:
         ref_stereo_data: StereoCamera = ref_edge_data["stereo_camera"]
         new_stereo_data: StereoCamera = new_edge_data["stereo_camera"]
 
-        self.add_initial_cam_pose_estimate(new_stereo_data.cam_0.pose, new_edge[0])
-        self.add_initial_cam_pose_estimate(new_stereo_data.cam_1.pose, new_edge[1])
+        self.add_initial_cam_pose_estimate(new_stereo_data.cam_0.pose, new_edge[0], num_inliers)
+        self.add_initial_cam_pose_estimate(new_stereo_data.cam_1.pose, new_edge[1], num_inliers)
 
         # Add between poses between combination of unique cameras
         ref_cam_idx = 0 if reference_edge[1] in new_edge else 1
@@ -193,7 +211,7 @@ class SceneGraph:
                 # to iterate through the full track, only the most recent results
                 (src, dst), pt_3D, inlier = track_obj.get_edge(new_edge)
                 if inlier:
-                    self.add_initial_pt_3D_landmark_estimate(track_obj.track_id, pt_3D)
+                    self.add_initial_pt_3D_landmark_estimate(track_obj.track_id, pt_3D, num_inliers)
                     self.add_projection_factors(src, new_edge[0], track_obj.track_id)
                     self.add_projection_factors(dst, new_edge[1], track_obj.track_id)
                     self.add_prior_point_factor(track_obj.track_id, pt_3D)
