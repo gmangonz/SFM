@@ -26,13 +26,4 @@ class CONFIG(DotDict):
     method = "dijkstra"
 
 
-siftDetector = cv2.SIFT.create(
-    nOctaveLayers=CONFIG.nlayers,
-    nfeatures=CONFIG.nfeatures,
-    contrastThreshold=CONFIG.contrastThreshold,
-    edgeThreshold=CONFIG.edgeThreshold,
-    sigma=CONFIG.sigma,
-)
-
-
 K = np.array([[1080, 0, 540], [0, 1080, 960], [0, 0, 1]])

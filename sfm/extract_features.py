@@ -33,16 +33,6 @@ class ImageDataset(Dataset):
         return len(self.image_paths)
 
 
-def collate_fn(batch) -> tuple[np.ndarray, np.ndarray, list[KeyPoint], np.ndarray]:
-    x: np.ndarray = batch[0]
-
-    clahe, kpts, descriptors = SIFT(x)
-    kpts = kpts.tolist()
-    kpts = [KeyPoint(kpt.pt, kpt.size, kpt.angle, kpt.response, kpt.octave, kpt.class_id) for kpt in kpts]
-
-    return x.astype(np.float32) / 255.0, clahe, kpts, descriptors
-
-
 def get_image_loader(image_dir: str) -> DataLoader:
     """
     Get image loader that iterates though image directory to extract
@@ -58,6 +48,22 @@ def get_image_loader(image_dir: str) -> DataLoader:
     DataLoader
         Data loader.
     """
+    siftDetector = cv2.SIFT.create(
+        nOctaveLayers=CONFIG.nlayers,
+        nfeatures=CONFIG.nfeatures,
+        contrastThreshold=CONFIG.contrastThreshold,
+        edgeThreshold=CONFIG.edgeThreshold,
+        sigma=CONFIG.sigma,
+    )
+
+    def collate_fn(batch) -> tuple[np.ndarray, np.ndarray, list[KeyPoint], np.ndarray]:
+        x: np.ndarray = batch[0]
+
+        clahe, kpts, descriptors = SIFT(x, siftDetector)
+        kpts = kpts.tolist()
+        kpts = [KeyPoint(kpt.pt, kpt.size, kpt.angle, kpt.response, kpt.octave, kpt.class_id) for kpt in kpts]
+
+        return x.astype(np.float32) / 255.0, clahe, kpts, descriptors
 
     dataset = ImageDataset(image_dir, grayscale=not CONFIG.RGB)
     loader = DataLoader(

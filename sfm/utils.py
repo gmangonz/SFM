@@ -12,7 +12,7 @@ import torch
 __cwd__ = Path(os.path.dirname(__file__))
 
 
-from sfm.config import CONFIG, K, siftDetector
+from sfm.config import CONFIG, K
 
 formatter = logging.Formatter(fmt="[%(asctime)s %(name)s %(levelname)s] %(message)s", datefmt="%Y/%m/%d %H:%M:%S")
 handler = logging.StreamHandler()
@@ -166,7 +166,7 @@ def NMS(keypoints: list[cv2.KeyPoint], radius: int) -> np.ndarray:
 
 
 def SIFT(
-    img: np.ndarray | torch.Tensor,
+    img: np.ndarray | torch.Tensor, siftDetector: cv2.SIFT
 ) -> tuple[np.ndarray, np.ndarray[cv2.KeyPoint], np.ndarray]:
 
     if isinstance(img, torch.Tensor):
