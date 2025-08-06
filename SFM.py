@@ -367,6 +367,7 @@ if __name__ == "__main__":
         "--method",
         type=str,
         default=CONFIG.method,
+        choices=["dijkstra", "dfs", "unique_dfs"],
         help="Method to use for track extraction (default: %(default)s).",
     )
     parser.add_argument(
