@@ -4,6 +4,7 @@ import gtsam
 import networkx as nx
 import numpy as np
 from gtsam.symbol_shorthand import C as Camera
+from gtsam.symbol_shorthand import K as Instrinsic
 from gtsam.symbol_shorthand import L as Landmark
 from scipy.spatial.transform import Rotation as Rotation
 
@@ -11,10 +12,6 @@ from sfm.config import K
 from sfm.covisibility import QueryTrainTracks
 from sfm.utils import StereoCamera
 from sfm.visualization import visualize_graph
-
-point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
-camera_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
-pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]))
 
 
 class SceneGraph:
@@ -26,13 +23,20 @@ class SceneGraph:
         self.K = gtsam.Cal3_S2(K[0, 0], K[1, 1], 0.0, K[0, 2], K[1, 2])
 
         self.pose_noise = gtsam.noiseModel.Diagonal.Sigmas(
-            np.array([0.3, 0.3, 0.3, 0.1, 0.1, 0.1])  # 30 cm and 0.1 rad
+            np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1])  # 10 cm and 0.1 rad
         )
         self.point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+
         self.camera_noise = gtsam.noiseModel.Robust.Create(
-            gtsam.noiseModel.mEstimator.Huber(5.0), gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
+            gtsam.noiseModel.mEstimator.Huber(1.0),  # 1 pixel threshold
+            gtsam.noiseModel.Isotropic.Sigma(2, 1.0),  # Assuming 1-pixel std dev
         )
-        self.camera_noise = gtsam.noiseModel.Isotropic.Sigma(2, 1.0)
+        self.intrinsic_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([10.0, 10.0, 1.0, 5.0, 5.0])  # fx, fy, skew, cx, cy
+        )
+
+        self.initial_estimate.insert(Instrinsic(0), self.K)
+        self.graph.add(gtsam.PriorFactorCal3_S2(Instrinsic(0), self.K, self.intrinsic_noise))
 
         self.initialized = False
 
@@ -48,7 +52,7 @@ class SceneGraph:
             Camera index.
         """
 
-        global_pose = np.linalg.inv(global_pose)
+        global_pose = np.linalg.inv(global_pose)  # NOTE: I believe this is to convert to gtsam reference
         global_pose = gtsam.Pose3(gtsam.Rot3(global_pose[:3, :3]), gtsam.Point3(global_pose[:3, -1].flatten()))
         if not self.initial_estimate.exists(Camera(idx)):
             self.initial_estimate.insert(Camera(idx), global_pose)
@@ -112,7 +116,7 @@ class SceneGraph:
             )
         )
 
-    def add_between_poses(self, idx_1: int, idx_2: int, relative_pose: np.ndarray):
+    def add_between_poses(self, idx_1: int, idx_2: int, global_pose_1: np.ndarray, global_pose_2: np.ndarray):
         """
         Adds a BetweenFactorPose3 to the graph to add a soft contraint on the relative pose between
         2 cameras.
@@ -123,10 +127,15 @@ class SceneGraph:
             Camera index 1.
         idx_2 : int
             Camera index 2.
-        relative_pose : np.ndarray
-            Relative pose between the 2 cameras.
+        global_pose_1 : np.ndarray
+            Global pose for camera 1.
+        global_pose_2 : np.ndarray
+            Global pose for camera 2.
         """
+        global_pose_1 = np.linalg.inv(global_pose_1)  # NOTE: I believe this is to convert to gtsam reference
+        global_pose_2 = np.linalg.inv(global_pose_2)  # NOTE: I believe this is to convert to gtsam reference
 
+        relative_pose = global_pose_1 @ np.linalg.inv(global_pose_2)
         relative_pose = gtsam.Pose3(gtsam.Rot3(relative_pose[:3, :3]), gtsam.Point3(relative_pose[:3, -1].flatten()))
         factor = gtsam.BetweenFactorPose3(Camera(idx_1), Camera(idx_2), relative_pose, self.pose_noise)
         self.graph.add(factor)
@@ -164,7 +173,17 @@ class SceneGraph:
 
         self.add_initial_cam_pose_estimate(new_stereo_data.cam_0.pose, new_edge[0])
         self.add_initial_cam_pose_estimate(new_stereo_data.cam_1.pose, new_edge[1])
-        # TODO: Add between poses (relative) for new_edge and non-intersection between ref_edge and new_edge
+
+        # Add between poses between combination of unique cameras
+        ref_cam_idx = 0 if reference_edge[1] in new_edge else 1
+        new_cam_idx = 0 if new_edge[1] in reference_edge else 1
+        self.add_between_poses(new_edge[0], new_edge[1], new_stereo_data.cam_0.pose, new_stereo_data.cam_1.pose)
+        self.add_between_poses(
+            reference_edge[ref_cam_idx],
+            new_edge[new_cam_idx],
+            ref_stereo_data[ref_cam_idx].pose,
+            new_stereo_data[new_cam_idx].pose,
+        )
 
         # Iterate through the tracks of matched points that pass
         # through the cameras: (ref_i, ref_j) and (new_m, new_n)
